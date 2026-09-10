@@ -12,6 +12,16 @@ export interface Me {
 	isAdmin: boolean;
 }
 
+export interface UserRecord {
+	id: string;
+	email: string;
+	name: string;
+	role: "admin" | "user";
+	active: boolean;
+	createdAt: string;
+	lastSeenAt: string;
+}
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export class ApiError extends Error {
@@ -109,6 +119,16 @@ const api = {
 
 	// Auth
 	getMe: () => get<Me>("/api/v1/me"),
+
+	// Admin: user registry
+	listAdminUsers: () => get<{ users: UserRecord[] }>("/api/v1/admin/users"),
+	updateAdminUserRole: (sub: string, role: "admin" | "user") =>
+		put<UserRecord>(
+			`/api/v1/admin/users/${encodeURIComponent(sub)}/role`,
+			{ role },
+		),
+	deactivateAdminUser: (sub: string) =>
+		del<UserRecord>(`/api/v1/admin/users/${encodeURIComponent(sub)}`),
 
 	// Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),

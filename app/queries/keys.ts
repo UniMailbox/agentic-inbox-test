@@ -25,4 +25,5 @@ export const queryKeys = {
 	},
 	config: ["config"] as const,
 	me: ["me"] as const,
+	adminUsers: ["admin", "users"] as const,
 };
