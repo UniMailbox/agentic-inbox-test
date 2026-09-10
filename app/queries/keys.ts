@@ -26,4 +26,8 @@ export const queryKeys = {
 	config: ["config"] as const,
 	me: ["me"] as const,
 	adminUsers: ["admin", "users"] as const,
+	adminGrants: {
+		all: ["admin", "grants"] as const,
+		detail: (mailboxId: string) => ["admin", "grants", mailboxId] as const,
+	},
 };

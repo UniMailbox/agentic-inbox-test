@@ -22,6 +22,20 @@ export interface UserRecord {
 	lastSeenAt: string;
 }
 
+/** Plan C: permission bits on a per-mailbox grant. "manage" implies the others. */
+export type Permission = "read" | "write" | "delete" | "manage";
+
+export interface Grant {
+	permissions: Permission[];
+	grantedBy: string;
+	grantedAt: string;
+}
+
+export interface Grants {
+	mailboxId: string;
+	grants: Record<string, Grant>;
+}
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export class ApiError extends Error {
@@ -129,6 +143,13 @@ const api = {
 		),
 	deactivateAdminUser: (sub: string) =>
 		del<UserRecord>(`/api/v1/admin/users/${encodeURIComponent(sub)}`),
+
+	// Admin: grants (Plan C: per-mailbox access)
+	listAdminGrants: () => get<{ grants: Grants[] }>("/api/v1/admin/grants"),
+	getAdminGrants: (mailboxId: string) =>
+		get<Grants>(`/api/v1/admin/grants/${encodeURIComponent(mailboxId)}`),
+	putAdminGrants: (mailboxId: string, grants: Record<string, { permissions: Permission[] }>) =>
+		put<Grants>(`/api/v1/admin/grants/${encodeURIComponent(mailboxId)}`, { grants }),
 
 	// Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
