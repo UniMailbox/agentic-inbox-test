@@ -2,11 +2,12 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Button, Input, Tooltip } from "@cloudflare/kumo";
-import { GearSixIcon, ListIcon, MagnifyingGlassIcon, RobotIcon, XIcon } from "@phosphor-icons/react";
+import { Badge, Button, Input, Tooltip } from "@cloudflare/kumo";
+import { GearSixIcon, ListIcon, MagnifyingGlassIcon, RobotIcon, UserCircleIcon, XIcon } from "@phosphor-icons/react";
 import { type KeyboardEvent, useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useUIStore } from "~/hooks/useUIStore";
+import { useMe } from "~/queries/me";
 
 export default function Header() {
 	const [searchQuery, setSearchQuery] = useState("");
@@ -16,6 +17,7 @@ export default function Header() {
 	const location = useLocation();
 	const [searchParams] = useSearchParams();
 	const { toggleSidebar, toggleAgentPanel, isAgentPanelOpen } = useUIStore();
+	const { data: me } = useMe();
 
 	// Sync search input with URL query param so it stays populated
 	const urlQuery = searchParams.get("q") || "";
@@ -119,6 +121,19 @@ export default function Header() {
 			)}
 
 			<div className="flex items-center gap-1 ml-auto shrink-0">
+				{me && (
+					<Tooltip content={me.email} side="bottom">
+						<div className="hidden md:inline-flex items-center gap-2 px-2 py-1 rounded-md text-xs text-kumo-subtle">
+							<UserCircleIcon size={16} weight="regular" className="shrink-0" />
+							<span className="truncate max-w-[180px]">{me.name}</span>
+							{me.isAdmin && (
+								<Badge variant="primary">
+									Admin
+								</Badge>
+							)}
+						</div>
+					</Tooltip>
+				)}
 				<Tooltip content={isAgentPanelOpen ? "Hide agent panel" : "Show agent panel"} side="bottom" asChild>
 					<Button
 						variant={isAgentPanelOpen ? "secondary" : "ghost"}

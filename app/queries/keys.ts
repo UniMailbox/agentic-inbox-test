@@ -24,4 +24,5 @@ export const queryKeys = {
 			["search", mailboxId, query, page] as const,
 	},
 	config: ["config"] as const,
+	me: ["me"] as const,
 };

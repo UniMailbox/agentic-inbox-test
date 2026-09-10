@@ -4,6 +4,14 @@
 
 import type { Domain, Email, Folder, Mailbox } from "~/types";
 
+export interface Me {
+	id: string;
+	email: string;
+	name: string;
+	role: "admin" | "user";
+	isAdmin: boolean;
+}
+
 const REQUEST_TIMEOUT_MS = 30_000;
 
 export class ApiError extends Error {
@@ -98,6 +106,9 @@ const api = {
 	// Config
 	getConfig: () =>
 		get<{ domains: Domain[]; emailAddresses: string[] }>("/api/v1/config"),
+
+	// Auth
+	getMe: () => get<Me>("/api/v1/me"),
 
 	// Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),
