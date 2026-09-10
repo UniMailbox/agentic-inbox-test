@@ -168,4 +168,20 @@ export const mailboxMigrations: Migration[] = [
             CREATE INDEX IF NOT EXISTS idx_emails_folder_date ON emails(folder_id, date DESC);
         `,
 	},
+	{
+		// FOLLOWUP-004: provider + delivery status. Recorded after the
+		// `sendEmail` resolves; updated by the Brevo webhook when the
+		// recipient delivery state changes (delivered / bounced / spam /
+		// deferred / failed). `provider_meta` is JSON-encoded (Brevo
+		// messageId, requestId, etc.) — kept opaque so we can add fields
+		// without further migrations.
+		name: "9_provider_delivery_status",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN provider_name TEXT;
+            ALTER TABLE emails ADD COLUMN provider_meta TEXT;
+            ALTER TABLE emails ADD COLUMN delivery_status TEXT;
+            CREATE INDEX IF NOT EXISTS idx_emails_message_id ON emails(message_id);
+            CREATE INDEX IF NOT EXISTS idx_emails_delivery_status ON emails(delivery_status);
+        `),
+	},
 ];

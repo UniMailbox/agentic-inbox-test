@@ -93,6 +93,25 @@ export function parseAllowedDomains(domainsRaw: string | undefined): Set<string>
 }
 
 /**
+ * Read the mailbox settings JSON from R2. Returns `null` when the file
+ * doesn't exist or is malformed. The shape is intentionally loose — we
+ * only read the `provider` override here (FOLLOWUP-004 / FOLLOWUP-006).
+ */
+export async function readMailboxSettings(
+	bucket: R2Bucket,
+	mailboxId: string,
+): Promise<{ provider?: { type?: string } } | null> {
+	const obj = await bucket.get(`mailboxes/${mailboxId}.json`);
+	if (!obj) return null;
+	try {
+		const parsed = (await obj.json()) as { provider?: { type?: string } };
+		return parsed ?? null;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Extract the lowercase domain from an email address. Returns null when the
  * address is malformed (no `@` or empty local/domain parts).
  */

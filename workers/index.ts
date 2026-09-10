@@ -17,6 +17,7 @@ import {
 	assertDomainAllowed,
 	listDomains,
 	parseAllowedDomains,
+	readMailboxSettings,
 } from "./lib/email-helpers";
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
@@ -27,6 +28,7 @@ import {
 	handleProvidersDelete,
 	handleProvidersAudit,
 } from "./routes/admin-providers";
+import { handleBrevoWebhook } from "./routes/webhooks-brevo";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { requireMailbox } from "./lib/mailbox";
@@ -281,6 +283,16 @@ app.delete("/api/v1/admin/providers", requireAdmin, handleProvidersDelete);
 /** Recent audit log entries for provider config changes. */
 app.get("/api/v1/admin/providers/audit", requireAdmin, handleProvidersAudit);
 
+// -- Provider webhooks (FOLLOWUP-004) --------------------------------
+//
+// These endpoints are called by external provider services (Brevo) and
+// therefore bypass the requireAdmin/requireUser middleware. They are
+// authenticated by HMAC signature verification in the handler itself.
+// Must be declared before any catch-all that might swallow the path.
+
+/** Brevo transactional webhook — verifies HMAC and updates delivery_status. */
+app.post("/api/v1/webhooks/brevo", handleBrevoWebhook);
+
 // -- Mailboxes ------------------------------------------------------
 
 app.get("/api/v1/mailboxes", async (c) => {
@@ -388,6 +400,10 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", requireMailbox("write"), async (
 	if (rateLimitError) return c.json({ error: rateLimitError }, 429);
 	const attachmentData = await storeAttachments(c.env.BUCKET, messageId, attachments);
 
+	// FOLLOWUP-004 + FOLLOWUP-006: load mailbox settings so the per-mailbox
+	// provider override is honored. Recorded into the email row after send.
+	const mailboxSettings = await readMailboxSettings(c.env.BUCKET, mailboxId);
+
 	await stub.createEmail(Folders.SENT, {
 		id: messageId, subject, sender: fromEmail, recipient: toStr,
 		cc: cc ? (Array.isArray(cc) ? cc.join(", ") : cc).toLowerCase() : null,
@@ -410,7 +426,27 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", requireMailbox("write"), async (
 			to, cc, bcc, from, subject, html, text,
 			attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
 			...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),
-		}).catch((e) => console.error("Deferred email delivery failed:", (e as Error).message)),
+		}, mailboxSettings)
+			.then(async (result) => {
+				// FOLLOWUP-004: persist provider outcome on the email row so
+				// the UI can show "Sent via Cloudflare" and the webhook
+				// can later flip the delivery_status when Brevo confirms.
+				await stub.setDeliveryStatus(outgoingMessageId, {
+					provider_name: result.providerName,
+					provider_meta: result.providerMeta
+						? JSON.stringify(result.providerMeta)
+						: null,
+					delivery_status: "sent",
+				});
+			})
+			.catch(async (e) => {
+				console.error("Deferred email delivery failed:", (e as Error).message);
+				// Record the failure so the UI shows "Failed" instead of
+				// leaving the row in an indeterminate "Sent" state.
+				await stub.setDeliveryStatus(outgoingMessageId, {
+					delivery_status: `failed:${(e as Error).message.slice(0, 80)}`,
+				});
+			}),
 	);
 	return c.json({ id: messageId, status: "sent" }, 202);
 });

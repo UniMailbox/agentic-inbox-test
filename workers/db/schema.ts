@@ -29,6 +29,12 @@ export const emails = sqliteTable("emails", {
 	thread_id: text("thread_id"),
 	message_id: text("message_id"),
 	raw_headers: text("raw_headers"),
+	// Provider + delivery status (FOLLOWUP-004). Set after `sendEmail`
+	// resolves and updated by the provider webhook endpoint when the
+	// recipient delivery state changes.
+	provider_name: text("provider_name"),
+	provider_meta: text("provider_meta"),
+	delivery_status: text("delivery_status"),
 });
 
 export const attachments = sqliteTable("attachments", {

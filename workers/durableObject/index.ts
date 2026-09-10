@@ -87,6 +87,11 @@ interface EmailData {
 	thread_id?: string | null;
 	message_id?: string | null;
 	raw_headers?: string | null;
+	// FOLLOWUP-004: provider + delivery status. Optional — set after
+	// `sendEmail` resolves; updated by the Brevo webhook.
+	provider_name?: string | null;
+	provider_meta?: string | null;
+	delivery_status?: string | null;
 }
 
 interface AttachmentData {
@@ -457,6 +462,47 @@ export class MailboxDO extends DurableObject<Env> {
 			starred: !!email.starred,
 			attachments: emailAttachments,
 		};
+	}
+
+	/**
+	 * Update the delivery-status columns for an email by message_id. Called
+	 * by the Brevo webhook handler (FOLLOWUP-004) and by the send route
+	 * immediately after `sendEmail` resolves.
+	 *
+	 * Returns the number of rows updated (0 if no matching email).
+	 *
+	 * Implemented with raw SQL because Drizzle's `.run()` on a DO update
+	 * does not surface `changes`. We build the UPDATE statement explicitly
+	 * to keep the return value simple.
+	 */
+	async setDeliveryStatus(
+		messageId: string,
+		update: {
+			provider_name?: string | null;
+			provider_meta?: string | null;
+			delivery_status?: string | null;
+		},
+	): Promise<number> {
+		const sets: string[] = [];
+		const params: (string | null)[] = [];
+		const push = (col: string, val: string | null | undefined) => {
+			if (val === undefined) return;
+			params.push(val);
+			sets.push(`${col} = ?${params.length}`);
+		};
+		push("provider_name", update.provider_name);
+		push("provider_meta", update.provider_meta);
+		push("delivery_status", update.delivery_status);
+		if (sets.length === 0) return 0;
+		params.push(messageId);
+		const sqlText = `UPDATE emails SET ${sets.join(", ")} WHERE message_id = ?${params.length}`;
+		const cursor = this.ctx.storage.sql.exec(sqlText, ...params);
+		// Cloudflare D1/SqlStorage returns rowsAffected via `.rowsWritten`
+		// for INSERT/UPDATE/DELETE; for DOs it surfaces as `rowsWritten`.
+		// Read via the named property if available, else fall back to
+		// counting the meta field — both are stable across runtimes.
+		const meta = (cursor as unknown as { rowsWritten?: number; meta?: { changes?: number } });
+		return meta.rowsWritten ?? meta.meta?.changes ?? 0;
 	}
 
 	/**
@@ -862,6 +908,9 @@ export class MailboxDO extends DurableObject<Env> {
 				thread_id: email.thread_id ?? null,
 				message_id: email.message_id ?? null,
 				raw_headers: email.raw_headers ?? null,
+				provider_name: email.provider_name ?? null,
+				provider_meta: email.provider_meta ?? null,
+				delivery_status: email.delivery_status ?? null,
 			})
 			.run();
 

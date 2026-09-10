@@ -16,4 +16,13 @@ export interface Env extends Cloudflare.Env {
 	 * `wrangler types` will narrow this to `string`.
 	 */
 	BREVO_API_KEY?: string;
+
+	/**
+	 * Brevo webhook signing secret. Set via
+	 * `wrangler secret put BREVO_WEBHOOK_SECRET`. Required for the
+	 * `/api/v1/webhooks/brevo` endpoint to accept delivery-status events
+	 * (FOLLOWUP-004). Configure the same value as the "webhook secret"
+	 * in the Brevo dashboard when registering the webhook URL.
+	 */
+	BREVO_WEBHOOK_SECRET?: string;
 }
