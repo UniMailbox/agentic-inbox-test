@@ -163,6 +163,79 @@ DEFAULT_PROVIDER = "cloudflare"
 PROVIDER_CONFIG = '{"domains":{"foo.com":"brevo"}}'
 ```
 
+#### Escape cheat sheet (FOLLOWUP-008)
+
+Wrangler vars live inside JSON, so each `"` inside the value must be `\"`. The most common shapes:
+
+| Shape                                              | JSON value                                                      |
+| -------------------------------------------------- | --------------------------------------------------------------- |
+| Default-only                                       | `"{}"`                                                          |
+| One domain                                         | `"{\"domains\":{\"foo.com\":\"brevo\"}}"`                        |
+| Multiple domains                                   | `"{\"domains\":{\"foo.com\":\"brevo\",\"bar.com\":\"cloudflare\"}}"` |
+| Domain with fallback                               | `"{\"domains\":{\"foo.com\":{\"type\":\"brevo\",\"fallback\":\"cloudflare\"}}}"` |
+| Domain + global default                            | `"{\"domains\":{\"foo.com\":\"brevo\"},\"default\":\"cloudflare\"}"` |
+
+If you find the escaping unreadable, paste your intended config into a [JSON escape tool](https://www.freeformatter.com/json-escape.html) ("escape JavaScript string" mode), or set the value through R2 instead (see [Hot reload via admin API](#hot-reload-via-admin-api) below).
+
+#### Hot reload via admin API (FOLLOWUP-006)
+
+Operators can override `PROVIDER_CONFIG` at runtime without redeploying by writing it to the R2 bucket as `config/providers.json`. The registry reads R2 first, then falls back to the env var, so the override takes effect on the next send in any isolate (no cache flush needed; the composite config key auto-invalidates `instanceCache` + `domainCache`).
+
+```bash
+# Write / replace the override
+curl -X PUT https://<your-worker>/api/v1/admin/providers \
+  -H 'Content-Type: application/json' \
+  -H 'cf-access-jwt-assertion: <admin JWT>' \
+  -d '{"config":"{\"domains\":{\"foo.com\":\"brevo\"}}"}'
+
+# Read the active config (R2 if set, else env var)
+curl https://<your-worker>/api/v1/admin/providers \
+  -H 'cf-access-jwt-assertion: <admin JWT>'
+
+# Drop the override (subsequent reads fall back to env var)
+curl -X DELETE https://<your-worker>/api/v1/admin/providers \
+  -H 'cf-access-jwt-assertion: <admin JWT>'
+
+# View the audit log (newest first; default limit 50, max 500)
+curl 'https://<your-worker>/api/v1/admin/providers/audit?limit=20' \
+  -H 'cf-access-jwt-assertion: <admin JWT>'
+
+# Liveness + circuit-breaker snapshot (any provider with an open breaker
+# shows up here; failures trip the breaker at 5 consecutive errors)
+curl https://<your-worker>/api/v1/admin/providers/health \
+  -H 'cf-access-jwt-assertion: <admin JWT>'
+```
+
+The audit log is appended to `config/audit.jsonl` (JSONL; one entry per write/delete with `timestamp`, `actor`, `action`, `previousRaw`, `nextRaw`).
+
+#### Delivery status webhooks (FOLLOWUP-004)
+
+To track whether the recipient's MTA accepted a message sent through Brevo, register a transactional webhook in the Brevo dashboard pointing at:
+
+```
+https://<your-worker>/api/v1/webhooks/brevo
+```
+
+Set the webhook signing secret in both Brevo and Cloudflare:
+
+```bash
+wrangler secret put BREVO_WEBHOOK_SECRET
+# value: same secret you configured in Brevo
+```
+
+Brevo events are mapped to the `delivery_status` column on the email row:
+
+| Brevo event         | `delivery_status` |
+| ------------------- | ----------------- |
+| `request`           | `accepted`        |
+| `delivered`         | `delivered`       |
+| `hard_bounce` / `soft_bounce` / `blocked` / `invalid_email` | `bounced` |
+| `spam`              | `spam`            |
+| `deferred`          | `deferred`        |
+| `error`             | `failed`          |
+| `opened`            | `opened`          |
+| `click`             | `clicked`         |
+
 ### Adding a new provider
 
 1. Create `workers/providers/<name>.ts` with `class XProvider implements EmailProvider`.
@@ -172,15 +245,15 @@ PROVIDER_CONFIG = '{"domains":{"foo.com":"brevo"}}'
 
 No call-site changes are required — `sendEmail(env, msg)` resolves the adapter transparently.
 
-### Limitations (as of v1)
+### Limitations (as of v1.1)
 
-- **Per-domain routing only.** No failover, no weighted routing, no per-mailbox override via the public create-mailbox endpoint (admin only).
 - **Provider limits are enforced synchronously.** `validateMessage()` rejects over-limit messages before they reach the provider — calls that previously failed in `waitUntil` now return `4xx` immediately. Provider limits are conservative defaults; consult each provider's docs for exact caps.
-- **`PROVIDER_CONFIG` changes require `wrangler deploy`.** Hot reload is not supported; the registry caches parsed config per isolate.
-- **No transactional webhooks.** Delivery status is opaque — the SENT folder records the message but not whether the recipient's mailbox accepted it. (Tracked as `FOLLOWUP-004` / `FOLLOWUP-013` for v1.1 / v2.)
-- **No automatic failover.** If a provider is down, messages routed to it fail; manually re-route by editing `PROVIDER_CONFIG`. (Tracked as `FOLLOWUP-005` for v1.1.)
+- **Failover with circuit breaker.** Each provider tracks consecutive failures in a module-level breaker (threshold 5, cool-off 30s); once open, sends short-circuit to a configured `fallback` if any, otherwise fail fast. Success resets the counter. (`FOLLOWUP-005`)
+- **Delivery status is recorded for Brevo only.** Cloudflare's email worker doesn't expose delivery events, so `delivery_status` for CF-routed mail stays at `sent`. Brevo's transactional webhook updates the row on `delivered` / `bounced` / etc. (`FOLLOWUP-004`)
+- **Hot reload via R2 admin API.** `PUT /api/v1/admin/providers` writes R2 `config/providers.json` and audits the change. The composite config key (source + raw + `DEFAULT_PROVIDER`) auto-invalidates the per-isolate caches so the next send picks up the new routing. (`FOLLOWUP-006`)
+- **Eager validation at first request.** Invalid `PROVIDER_CONFIG` (JSON or schema) is logged once per isolate on the first inbound request. The health endpoint surfaces all issues for diagnostics. (`FOLLOWUP-009`)
 - **Sender domain normalization.** Unicode domains (IDN) are converted to ASCII via punycode before lookup, but quoted local parts (`"john doe"@example.com`) and other RFC 5322 edge cases are not deeply parsed. The `from` address must already be plain enough for `extractDomain(msg.from)` to work.
-- **No outgoing-message audit log in the DB.** `providerName` and `providerMeta` are not currently stored alongside the SENT row; only the bound provider is logged at send time. (Tracked as `FOLLOWUP-004`.)
+- **Configuration UX.** JSON-in-env-var still requires escaping inside `wrangler.jsonc`; the [escape cheat sheet](#escape-cheat-sheet-followup-008) above mitigates this. For complex routing prefer the R2 admin API.
 
 ## License
 
