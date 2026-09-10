@@ -7,6 +7,8 @@ import { ArrowLeftIcon, MagnifyingGlassIcon } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 import MailboxSplitView from "~/components/MailboxSplitView";
+import { MailboxAccessDenied } from "~/components/MailboxAccessDenied";
+import { ApiError } from "~/services/api";
 import { formatListDate, getSnippetText } from "~/lib/utils";
 import { useUpdateEmail } from "~/queries/emails";
 import { useSearchEmails, SEARCH_PAGE_SIZE } from "~/queries/search";
@@ -55,11 +57,17 @@ export default function SearchResultsRoute() {
 		closePanel();
 	}, [closePanel, searchChanged, searchKey]);
 
-	const { data: searchData, isLoading } = useSearchEmails(
+	const { data: searchData, isLoading, error: searchError } = useSearchEmails(
 		mailboxId,
 		urlQuery,
 		currentPage,
 	);
+
+	// Plan C: a revoked grant can land the user here. Show a clear screen
+	// instead of an empty results page.
+	if (searchError && (searchError as ApiError).status === 403 && mailboxId) {
+		return <MailboxAccessDenied mailboxId={mailboxId} />;
+	}
 	const results = searchData?.results ?? [];
 	const totalCount = searchData?.totalCount ?? 0;
 	const isPanelOpen = selectedEmailId !== null || isComposing;

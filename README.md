@@ -48,7 +48,7 @@ https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
 - **Frontend:** React 19, React Router v7, Tailwind CSS, Zustand, TipTap, `@cloudflare/kumo`
 - **Backend:** Hono, Cloudflare Workers, Durable Objects (SQLite), R2, Email Routing
 - **AI Agent:** Cloudflare Agents SDK (`AIChatAgent`), AI SDK v6, Workers AI (`@cf/moonshotai/kimi-k2.5`), `react-markdown` + `remark-gfm`
-- **Auth:** Cloudflare Access JWT validation (required outside local development)
+- **Auth:** Cloudflare Access JWT validation (required outside local development); per-mailbox grants enforced via `ADMIN_EMAILS` + `/admin` UI
 
 ## Getting Started
 
@@ -82,7 +82,7 @@ Operational notes:
 - **Outbound mail.** The `From` address of every outgoing email is the mailbox address itself, so the displayed sender domain is whichever domain the mailbox was created on. Make sure outbound `send_email` is enabled for every zone in the Email Service dashboard.
 - **Per-domain allow-list.** When `EMAIL_ADDRESSES` is empty, mailboxes can only be created on addresses whose domain is in `DOMAINS`. With `EMAIL_ADDRESSES` set, that explicit allow-list takes precedence and `DOMAINS` still gates inbound delivery (the recipient domain must match one of the configured zones).
 - **Safety net.** If neither `EMAIL_ADDRESSES` nor `DOMAINS` is configured, inbound mail is refused (logged and dropped). Configure at least one before expecting to receive anything.
-- **Multi-domain ≠ multi-tenant.** All teammates who pass the shared Cloudflare Access policy can still see every mailbox. Per-mailbox permissions are not yet supported.
+- **Multi-domain ≠ multi-tenant.** All teammates who pass the shared Cloudflare Access policy are recognized by the app. Admins (configured via `ADMIN_EMAILS`) see every mailbox; everyone else only sees mailboxes they've been granted access to on `/admin` → Mailbox access. Each grant can be `read`, `write`, `delete`, or `manage` (which implies all the others).
 
 ### Deploy
 
@@ -98,7 +98,9 @@ npm run deploy
 - [Workers AI](https://developers.cloudflare.com/workers-ai/) enabled (for the agent)
 - [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) configured for deployed/shared environments (required in production)
 
-Any user who passes the shared Cloudflare Access policy can access all mailboxes in this app by design. This includes the MCP server at `/mcp` -- external AI tools (Claude Code, Cursor, etc.) connected via MCP can operate on any mailbox by passing a `mailboxId` parameter. There is no per-mailbox authorization; the Cloudflare Access policy is the single trust boundary.
+Any user who passes the shared Cloudflare Access policy is recognized by the app. Admins (anyone listed in the `ADMIN_EMAILS` env var) can see and manage every mailbox. Other users only see mailboxes they have been granted access to on the `/admin` page.
+
+The MCP server at `/mcp` enforces the same per-mailbox grants: external AI tools (Claude Code, Cursor, etc.) connected via MCP operate on a mailbox only if the calling user has the required permission (`read`/`write`/`delete`/`manage`) on it. `manage` implies all others.
 
 ## Architecture
 

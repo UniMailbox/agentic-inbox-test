@@ -22,6 +22,8 @@ import { useParams } from "react-router";
 import { Folders } from "shared/folders";
 import { formatListDate } from "shared/dates";
 import MailboxSplitView from "~/components/MailboxSplitView";
+import { MailboxAccessDenied } from "~/components/MailboxAccessDenied";
+import { ApiError } from "~/services/api";
 import { getSnippetText } from "~/lib/utils";
 import {
 	useDeleteEmail,
@@ -171,7 +173,14 @@ export default function EmailListRoute() {
 	const {
 		data: emailData,
 		isFetching: isRefreshing,
+		error: emailsError,
 	} = useEmails(mailboxId, params, { refetchInterval: 30_000 });
+
+	// Plan C: a stale URL or revoked grant can land the user here. Show a
+	// clear "no access" screen instead of an empty inbox.
+	if (emailsError && (emailsError as ApiError).status === 403 && mailboxId) {
+		return <MailboxAccessDenied mailboxId={mailboxId} />;
+	}
 
 	const emails = emailData?.emails ?? [];
 	const totalCount = emailData?.totalCount ?? 0;
