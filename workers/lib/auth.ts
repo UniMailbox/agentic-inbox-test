@@ -13,6 +13,7 @@
 import type { Context, MiddlewareHandler } from "hono";
 import type { Env } from "../types";
 import type { UserContext } from "./context";
+import { ensureUser } from "./users";
 
 export type Role = "admin" | "user";
 
@@ -109,6 +110,19 @@ export const requireUser: MiddlewareHandler<UserContext> = async (c, next) => {
 	const user = userFromPayload(payload, c.env);
 	if (!user) return c.text("Invalid user identity", 401);
 	c.set("user", user);
+
+	// Persist a UserRecord so admins can see this identity in the registry.
+	// Deactivated users are still authenticated but get a 403 below so any
+	// later authorization middleware sees an inactive user.
+	try {
+		const record = await ensureUser(c.env.BUCKET, user);
+		if (!record.active) {
+			return c.text("Account deactivated", 403);
+		}
+	} catch (e) {
+		// Don't block the request on R2 errors — log and continue.
+		console.error("ensureUser failed:", (e as Error).message);
+	}
 
 	await next();
 };

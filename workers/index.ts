@@ -23,7 +23,8 @@ import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { requireMailbox } from "./lib/mailbox";
-import { requireUser } from "./lib/auth";
+import { requireAdmin, requireUser } from "./lib/auth";
+import { listUsers, setUserRole, deactivateUser } from "./lib/users";
 import type { MailboxContext } from "./lib/context";
 
 type AppContext = Context<MailboxContext>;
@@ -108,6 +109,51 @@ app.get("/api/v1/me", (c) => {
 		role: u.role,
 		isAdmin: u.role === "admin",
 	});
+});
+
+// -- Admin (Plan B: user registry) ----------------------------------
+
+app.get("/api/v1/admin/users", requireAdmin, async (c) => {
+	const users = await listUsers(c.env.BUCKET);
+	return c.json({ users });
+});
+
+app.put("/api/v1/admin/users/:sub/role", requireAdmin, async (c) => {
+	const sub = decodeURIComponent(c.req.param("sub") ?? "");
+	const body = (await c.req.json()) as { role?: "admin" | "user" };
+	if (body.role !== "admin" && body.role !== "user") {
+		return c.json({ error: "role must be 'admin' or 'user'" }, 400);
+	}
+	try {
+		const updated = await setUserRole(c.env.BUCKET, sub, body.role, c.var.user.id);
+		return c.json(updated);
+	} catch (e) {
+		const msg = (e as Error).message;
+		if (msg === "Admins cannot demote themselves") {
+			return c.json({ error: msg }, 409);
+		}
+		if (msg.endsWith("not found")) {
+			return c.json({ error: msg }, 404);
+		}
+		throw e;
+	}
+});
+
+app.delete("/api/v1/admin/users/:sub", requireAdmin, async (c) => {
+	const sub = decodeURIComponent(c.req.param("sub") ?? "");
+	try {
+		const updated = await deactivateUser(c.env.BUCKET, sub, c.var.user.id);
+		return c.json(updated);
+	} catch (e) {
+		const msg = (e as Error).message;
+		if (msg === "Admins cannot deactivate themselves") {
+			return c.json({ error: msg }, 409);
+		}
+		if (msg.endsWith("not found")) {
+			return c.json({ error: msg }, 404);
+		}
+		throw e;
+	}
 });
 
 // -- Mailboxes ------------------------------------------------------
