@@ -21,91 +21,84 @@ import {
 	EmailProviderError,
 	EmailProviderConfigError,
 } from "../../workers/providers/types";
-
-/** Minimal env stub: only the fields the registry reads. */
-function makeEnv(overrides: Partial<Env> = {}): Env {
-	return {
-		POLICY_AUD: "aud",
-		TEAM_DOMAIN: "team.cloudflareaccess.com",
-		EMAIL: { send: vi.fn(async () => ({ messageId: "cf-1" })) } as unknown as Env["EMAIL"],
-		BREVO_API_KEY: "brevo-test-key",
-		DEFAULT_PROVIDER: "cloudflare",
-		PROVIDER_CONFIG: "",
-		...overrides,
-	} as unknown as Env;
-}
+import { makeEnv } from "./_env";
 
 beforeEach(() => {
 	_resetProviderCaches();
 });
 
 describe("getProviderForDomain precedence", () => {
-	it("mailbox override wins over everything else", () => {
+	it("mailbox override wins over everything else", async () => {
 		const env = makeEnv({
 			PROVIDER_CONFIG: JSON.stringify({ domains: { "foo.com": "cloudflare" } }),
 			DEFAULT_PROVIDER: "cloudflare",
+			BREVO_API_KEY: "test-key",
 		});
 		// mailbox override says brevo even though PROVIDER_CONFIG says cloudflare
-		const provider = getProviderForDomain(env, "foo.com", { provider: { type: "brevo" } });
+		const provider = await getProviderForDomain(env, "foo.com", {
+			provider: { type: "brevo" },
+		});
 		expect(provider.name).toBe("brevo");
 	});
 
-	it("PROVIDER_CONFIG.domains[domain] wins over DEFAULT_PROVIDER", () => {
+	it("PROVIDER_CONFIG.domains[domain] wins over DEFAULT_PROVIDER", async () => {
 		const env = makeEnv({
 			PROVIDER_CONFIG: JSON.stringify({ domains: { "foo.com": "brevo" } }),
 			DEFAULT_PROVIDER: "cloudflare",
+			BREVO_API_KEY: "test-key",
 		});
-		const provider = getProviderForDomain(env, "foo.com");
+		const provider = await getProviderForDomain(env, "foo.com");
 		expect(provider.name).toBe("brevo");
 	});
 
-	it("PROVIDER_CONFIG.default wins over DEFAULT_PROVIDER", () => {
+	it("PROVIDER_CONFIG.default wins over DEFAULT_PROVIDER", async () => {
 		const env = makeEnv({
 			PROVIDER_CONFIG: JSON.stringify({ default: "brevo" }),
 			DEFAULT_PROVIDER: "cloudflare",
+			BREVO_API_KEY: "test-key",
 		});
-		const provider = getProviderForDomain(env, "unmapped.com");
+		const provider = await getProviderForDomain(env, "unmapped.com");
 		expect(provider.name).toBe("brevo");
 	});
 
-	it("falls back to DEFAULT_PROVIDER when no config matches", () => {
+	it("falls back to DEFAULT_PROVIDER when no config matches", async () => {
 		const env = makeEnv({
 			PROVIDER_CONFIG: JSON.stringify({ domains: { "other.com": "brevo" } }),
 			DEFAULT_PROVIDER: "cloudflare",
 		});
-		const provider = getProviderForDomain(env, "unmapped.com");
+		const provider = await getProviderForDomain(env, "unmapped.com");
 		expect(provider.name).toBe("cloudflare");
 	});
 
-	it("falls back to 'cloudflare' when neither config nor env var is set", () => {
+	it("falls back to 'cloudflare' when neither config nor env var is set", async () => {
 		const env = makeEnv({
 			DEFAULT_PROVIDER: undefined,
 			PROVIDER_CONFIG: "",
 		});
-		const provider = getProviderForDomain(env, "any.com");
+		const provider = await getProviderForDomain(env, "any.com");
 		expect(provider.name).toBe("cloudflare");
 	});
 
-	it("throws EmailProviderConfigError on unknown provider type in PROVIDER_CONFIG", () => {
+	it("throws EmailProviderConfigError on unknown provider type in PROVIDER_CONFIG", async () => {
 		const env = makeEnv({
 			PROVIDER_CONFIG: JSON.stringify({ domains: { "foo.com": "unknown" } }),
 		});
-		expect(() => getProviderForDomain(env, "foo.com")).toThrow(
+		await expect(getProviderForDomain(env, "foo.com")).rejects.toThrow(
 			EmailProviderConfigError,
 		);
 	});
 
-	it("caches the resolved provider across calls for the same domain", () => {
+	it("caches the resolved provider across calls for the same domain", async () => {
 		const env = makeEnv();
-		const a = getProviderForDomain(env, "foo.com");
-		const b = getProviderForDomain(env, "foo.com");
+		const a = await getProviderForDomain(env, "foo.com");
+		const b = await getProviderForDomain(env, "foo.com");
 		expect(a).toBe(b);
 	});
 
-	it("provider instances are cached across domains mapping to the same provider", () => {
+	it("provider instances are cached across domains mapping to the same provider", async () => {
 		const env = makeEnv();
-		const a = getProviderForDomain(env, "foo.com");
-		const b = getProviderForDomain(env, "bar.com");
+		const a = await getProviderForDomain(env, "foo.com");
+		const b = await getProviderForDomain(env, "bar.com");
 		// Both map to "cloudflare" — same instance
 		expect(a).toBe(b);
 	});
@@ -143,6 +136,7 @@ describe("sendEmail (registry entry point)", () => {
 		try {
 			const env = makeEnv({
 				PROVIDER_CONFIG: JSON.stringify({ domains: { "foo.com": "brevo" } }),
+				BREVO_API_KEY: "test-key",
 			});
 			const result = await sendEmail(env, {
 				to: "alice@example.com",

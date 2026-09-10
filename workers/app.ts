@@ -13,6 +13,7 @@ import type { AccessContext } from "./lib/context";
 import type { AccessPayload, User } from "./lib/auth";
 import { userFromPayload } from "./lib/auth";
 import { ensureUser } from "./lib/users";
+import { _runEagerValidation } from "./providers/registry";
 
 export { MailboxDO } from "./durableObject";
 export { EmailAgent } from "./agent";
@@ -48,12 +49,27 @@ function getAccessUrls(teamDomain: string) {
 // definitions in `workers/lib/context.ts`.
 const app = new Hono<AccessContext>();
 
+// FOLLOWUP-009: eager provider-config validation. Runs once per isolate on
+// the first inbound request — we can't do this at module load because
+// `env` isn't available until the worker handles a request. The flag inside
+// `_runEagerValidation()` prevents repeated runs. Vitest tests bypass this
+// code path because they never mount the Hono app.
+let eagerValidationRan = false;
+function runEagerValidationOnce(env: Env): void {
+	if (eagerValidationRan) return;
+	eagerValidationRan = true;
+	_runEagerValidation(env);
+}
+
 // Cloudflare Access JWT validation middleware (production only).
 // On success the verified payload is stored at `c.var.accessPayload` so
 // downstream middleware (e.g. `requireUser` in `workers/lib/auth.ts`) can
 // derive the authenticated user.
 app.use("*", async (c, next) => {
-	// Skip validation in development
+	// FOLLOWUP-009: validate PROVIDER_CONFIG once on first request.
+	runEagerValidationOnce(c.env);
+
+	// Skip Access JWT validation in development
 	if (import.meta.env.DEV) {
 		return next();
 	}

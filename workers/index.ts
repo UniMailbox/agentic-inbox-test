@@ -20,6 +20,13 @@ import {
 } from "./lib/email-helpers";
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
+import { handleProvidersHealth } from "./routes/admin-providers-health";
+import {
+	handleProvidersGet,
+	handleProvidersPut,
+	handleProvidersDelete,
+	handleProvidersAudit,
+} from "./routes/admin-providers";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { requireMailbox } from "./lib/mailbox";
@@ -249,6 +256,30 @@ app.put("/api/v1/admin/grants/:mailboxId", requireAdmin, async (c) => {
 	const record = await setGrants(c.env.BUCKET, mailboxId, stamped);
 	return c.json(record);
 });
+
+// -- Admin: provider health (FOLLOWUP-009) ---------------------------
+
+/**
+ * Liveness + validation report for the email-sending provider abstraction.
+ * Returns the parsed PROVIDER_CONFIG validation result, each registered
+ * provider's circuit-breaker state, and the result of each provider's
+ * `healthCheck()` (if defined). Admin-only.
+ */
+app.get("/api/v1/admin/providers/health", requireAdmin, handleProvidersHealth);
+
+// -- Admin: provider routing config hot-reload (FOLLOWUP-006) ---------
+
+/** Read active PROVIDER_CONFIG (R2 override first, env var fallback). */
+app.get("/api/v1/admin/providers", requireAdmin, handleProvidersGet);
+
+/** Write R2 override for PROVIDER_CONFIG. Validates before persisting. */
+app.put("/api/v1/admin/providers", requireAdmin, handleProvidersPut);
+
+/** Drop the R2 override; subsequent reads fall back to env var. */
+app.delete("/api/v1/admin/providers", requireAdmin, handleProvidersDelete);
+
+/** Recent audit log entries for provider config changes. */
+app.get("/api/v1/admin/providers/audit", requireAdmin, handleProvidersAudit);
 
 // -- Mailboxes ------------------------------------------------------
 

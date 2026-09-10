@@ -22,19 +22,21 @@ describe("parseProviderConfig", () => {
 			}),
 		);
 		expect(result).toEqual({
-			domains: { "foo.com": "brevo", "bar.com": "cloudflare" },
-			default: "cloudflare",
+			domains: {
+				"foo.com": { type: "brevo" },
+				"bar.com": { type: "cloudflare" },
+			},
+			default: { type: "cloudflare" },
 		});
 	});
 
-	it("lowercases all keys", () => {
-		const result = parseProviderConfig(
-			JSON.stringify({ domains: { "FOO.COM": "Brevo" }, default: "Cloudflare" }),
-		);
-		expect(result).toEqual({
-			domains: { "foo.com": "brevo" },
-			default: "cloudflare",
-		});
+	it("rejects uppercase inputs (zod schema is strict; operators should send canonical config)", () => {
+		const raw = JSON.stringify({ domains: { "FOO.COM": "Brevo" }, default: "Cloudflare" });
+		// Schema rejects uppercase domain labels + provider names; the parser
+		// returns {} and warns once. Operators should write lowercase.
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		expect(parseProviderConfig(raw)).toEqual({});
+		warn.mockRestore();
 	});
 
 	it("returns empty object for malformed JSON and logs once", () => {
@@ -46,7 +48,8 @@ describe("parseProviderConfig", () => {
 		warn.mockRestore();
 	});
 
-	it("skips non-string entries in `domains`", () => {
+	it("rejects non-string entries in `domains` (zod schema enforces entry shape)", () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		const result = parseProviderConfig(
 			JSON.stringify({
 				domains: {
@@ -56,23 +59,35 @@ describe("parseProviderConfig", () => {
 				},
 			}),
 		);
-		expect(result).toEqual({
-			domains: { "foo.com": "brevo" },
-		});
+		// Schema rejects the bad entries; entire config returns {}.
+		expect(result).toEqual({});
+		warn.mockRestore();
 	});
 
 	it("handles a config with only `domains`", () => {
 		const result = parseProviderConfig(
 			JSON.stringify({ domains: { "foo.com": "brevo" } }),
 		);
-		expect(result).toEqual({ domains: { "foo.com": "brevo" } });
+		expect(result).toEqual({ domains: { "foo.com": { type: "brevo" } } });
 		expect(result.default).toBeUndefined();
 	});
 
 	it("handles a config with only `default`", () => {
 		const result = parseProviderConfig(JSON.stringify({ default: "brevo" }));
-		expect(result).toEqual({ default: "brevo" });
+		expect(result).toEqual({ default: { type: "brevo" } });
 		expect(result.domains).toBeUndefined();
+	});
+
+	it("parses object form with fallback (FOLLOWUP-005)", () => {
+		const result = parseProviderConfig(
+			JSON.stringify({
+				domains: { "foo.com": { type: "brevo", fallback: "cloudflare" } },
+			}),
+		);
+		expect(result.domains?.["foo.com"]).toEqual({
+			type: "brevo",
+			fallback: "cloudflare",
+		});
 	});
 
 	it("returns empty when input is non-object JSON", () => {
