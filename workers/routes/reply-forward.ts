@@ -16,7 +16,7 @@ import {
 } from "../lib/email-helpers";
 import { SendEmailRequestSchema } from "../lib/schemas";
 import { Folders } from "../../shared/folders";
-import type { MailboxContext } from "../lib/mailbox";
+import type { MailboxContext } from "../lib/context";
 
 type AppContext = Context<MailboxContext>;
 type RateLimitStub = { checkSendRateLimit: () => Promise<string | null> };

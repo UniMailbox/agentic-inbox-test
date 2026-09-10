@@ -9,6 +9,8 @@ import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { EmailMCP } from "./mcp";
 import type { Env } from "./types";
+import type { AccessContext } from "./lib/context";
+import type { AccessPayload } from "./lib/auth";
 
 export { MailboxDO } from "./durableObject";
 export { EmailAgent } from "./agent";
@@ -39,10 +41,15 @@ function getAccessUrls(teamDomain: string) {
 	return { issuer, certsUrl };
 }
 
-// Main app that wraps the API and adds React Router fallback
-const app = new Hono<{ Bindings: Env }>();
+// Hono context type used by the outer middleware chain. Inner routers
+// (apiApp, MCP) declare their own context types via the centralized
+// definitions in `workers/lib/context.ts`.
+const app = new Hono<AccessContext>();
 
-// Cloudflare Access JWT validation middleware (production only)
+// Cloudflare Access JWT validation middleware (production only).
+// On success the verified payload is stored at `c.var.accessPayload` so
+// downstream middleware (e.g. `requireUser` in `workers/lib/auth.ts`) can
+// derive the authenticated user.
 app.use("*", async (c, next) => {
 	// Skip validation in development
 	if (import.meta.env.DEV) {
@@ -64,19 +71,24 @@ app.use("*", async (c, next) => {
 		return c.text("Missing required CF Access JWT", 403);
 	}
 
+	let payload: AccessPayload;
 	try {
 		const { issuer, certsUrl } = getAccessUrls(TEAM_DOMAIN);
 		const JWKS = createRemoteJWKSet(certsUrl);
-		await jwtVerify(token, JWKS, {
+		const verified = await jwtVerify(token, JWKS, {
 			issuer,
 			audience: POLICY_AUD,
 		});
+		payload = verified.payload as AccessPayload;
 	} catch {
 		return c.text("Invalid or expired Access token", 403);
 	}
 
-	// Authorization model note: once a teammate passes the shared Cloudflare
-	// Access policy, they can access all mailboxes in this app by design.
+	c.set("accessPayload", payload);
+
+	// Authorization model note: this middleware only authenticates. Per-route
+	// authorization (admin role, per-mailbox grants) is enforced by middleware
+	// inside `apiApp` / MCP, e.g. `requireUser` / `requirePermission`.
 	return next();
 });
 

@@ -8,15 +8,7 @@
  * and attaches it to the Hono context (`c.var.mailboxStub`).
  */
 import { createMiddleware } from "hono/factory";
-import type { MailboxDO } from "../durableObject";
-import type { Env } from "../types";
-
-export type MailboxContext = {
-	Bindings: Env;
-	Variables: {
-		mailboxStub: DurableObjectStub<MailboxDO>;
-	};
-};
+import type { MailboxContext } from "./context";
 
 export const requireMailbox = createMiddleware<MailboxContext>(async (c, next) => {
 	const rawId = c.req.param("mailboxId");

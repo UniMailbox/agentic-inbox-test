@@ -22,7 +22,9 @@ import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
-import { requireMailbox, type MailboxContext } from "./lib/mailbox";
+import { requireMailbox } from "./lib/mailbox";
+import { requireUser } from "./lib/auth";
+import type { MailboxContext } from "./lib/context";
 
 type AppContext = Context<MailboxContext>;
 
@@ -84,6 +86,7 @@ app.use("/api/*", cors({
 		return undefined;
 	},
 }));
+app.use("/api/*", requireUser);
 app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 
 // -- Config ---------------------------------------------------------
@@ -92,6 +95,19 @@ app.get("/api/v1/config", (c) => {
 	const domains = listDomains(c.env.DOMAINS);
 	const emailAddresses = c.env.EMAIL_ADDRESSES ?? [];
 	return c.json({ domains, emailAddresses });
+});
+
+// -- Current user ---------------------------------------------------
+
+app.get("/api/v1/me", (c) => {
+	const u = c.var.user;
+	return c.json({
+		id: u.id,
+		email: u.email,
+		name: u.name,
+		role: u.role,
+		isAdmin: u.role === "admin",
+	});
 });
 
 // -- Mailboxes ------------------------------------------------------
