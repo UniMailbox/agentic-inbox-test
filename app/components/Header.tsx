@@ -5,7 +5,7 @@
 import { Badge, Button, Input, Tooltip } from "@cloudflare/kumo";
 import { GearSixIcon, ListIcon, MagnifyingGlassIcon, RobotIcon, UserCircleIcon, XIcon } from "@phosphor-icons/react";
 import { type KeyboardEvent, useEffect, useState } from "react";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useMe } from "~/queries/me";
 
@@ -127,9 +127,13 @@ export default function Header() {
 							<UserCircleIcon size={16} weight="regular" className="shrink-0" />
 							<span className="truncate max-w-[180px]">{me.name}</span>
 							{me.isAdmin && (
-								<Badge variant="primary">
-									Admin
-								</Badge>
+								<Link
+									to="/admin"
+									aria-label="Open admin panel"
+									className="inline-flex"
+								>
+									<Badge variant="primary">Admin</Badge>
+								</Link>
 							)}
 						</div>
 					</Tooltip>
