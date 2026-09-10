@@ -245,6 +245,58 @@ Brevo events are mapped to the `delivery_status` column on the email row:
 
 No call-site changes are required — `sendEmail(env, msg)` resolves the adapter transparently.
 
+#### Per-mailbox provider override (FOLLOWUP-011)
+
+The mailbox creation endpoint (`POST /api/v1/mailboxes`) and the
+mailbox settings endpoint (`PUT /api/v1/mailboxes/:id`) both apply a
+strict zod schema that excludes the `provider` field. The dedicated
+admin endpoints are the only way to change which provider a single
+mailbox routes through. Each change is audited to
+`config/mailbox-audit.jsonl`.
+
+```bash
+# Read the current override (or null)
+curl https://<your-worker>/api/v1/admin/mailboxes/alice@example.com/provider \
+  -H 'cf-access-jwt-assertion: <admin JWT>'
+
+# Set an override
+curl -X PATCH https://<your-worker>/api/v1/admin/mailboxes/alice@example.com/provider \
+  -H 'Content-Type: application/json' \
+  -H 'cf-access-jwt-assertion: <admin JWT>' \
+  -d '{"type":"brevo"}'
+
+# Clear the override (next send falls back to PROVIDER_CONFIG / DEFAULT_PROVIDER)
+curl -X DELETE https://<your-worker>/api/v1/admin/mailboxes/alice@example.com/provider \
+  -H 'cf-access-jwt-assertion: <admin JWT>'
+# — or —
+curl -X PATCH .../provider -d '{"type":null}'
+
+# Audit log (newest first)
+curl 'https://<your-worker>/api/v1/admin/mailboxes/provider-audit?limit=20' \
+  -H 'cf-access-jwt-assertion: <admin JWT>'
+```
+
+The `provider` field on the mailbox JSON is only written by these
+endpoints. POST/PUT mailbox returns `400` if `settings.provider` is
+included.
+
+#### Sanitization guard (FOLLOWUP-010)
+
+To prevent accidentally logging the entire `env` object (which would
+expose every Cloudflare secret in `wrangler tail`), run
+[`scripts/check-no-env-leak.sh`](scripts/check-no-env-leak.sh) before
+committing:
+
+```bash
+bash scripts/check-no-env-leak.sh
+# check-no-env-leak: clean
+```
+
+Wire it into your editor or CI as desired; the script is dependency-free
+bash + grep. It catches `console.log(env)` / `console.error(env)` /
+`JSON.stringify(env)` patterns. Nested leaks (`{ k: env }`, `[env]`)
+require an AST-aware tool — see the script header for known limitations.
+
 ### Limitations (as of v1.1)
 
 - **Provider limits are enforced synchronously.** `validateMessage()` rejects over-limit messages before they reach the provider — calls that previously failed in `waitUntil` now return `4xx` immediately. Provider limits are conservative defaults; consult each provider's docs for exact caps.

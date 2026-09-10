@@ -7,3 +7,43 @@ TEAM_DOMAIN=https://your-team.cloudflareaccess.com
 # Example: "example.com" (single) or "example.com,foo.com,bar.com" (multiple).
 DOMAINS=example.com,test.com, bar.com, list.com
 EMAIL_ADDRESSES=
+
+# ── Email sending provider abstraction (FOLLOWUP-001…011) ───────────
+#
+# DEFAULT_PROVIDER is the fallback name when PROVIDER_CONFIG doesn't
+# match. Must be one of: "cloudflare" (default; uses the send_email
+# binding), "brevo" (requires BREVO_API_KEY).
+DEFAULT_PROVIDER=cloudflare
+
+# PROVIDER_CONFIG is a JSON blob for per-domain routing. The same value
+# (unescaped — TOML doesn't need JSON escaping) appears in wrangler.jsonc
+# as a JSON-escaped string.
+#
+# Empty (or unset) → everything routes to DEFAULT_PROVIDER.
+#
+# Examples:
+#   Single domain on Brevo, default Cloudflare:
+#     PROVIDER_CONFIG='{"domains":{"foo.com":"brevo"}}'
+#
+#   Domain with failover (try Brevo, fall back to Cloudflare on error):
+#     PROVIDER_CONFIG='{"domains":{"foo.com":{"type":"brevo","fallback":"cloudflare"}}}'
+#
+#   Multiple domains + global default:
+#     PROVIDER_CONFIG='{"domains":{"foo.com":"brevo","bar.com":"cloudflare"},"default":"cloudflare"}'
+#
+# You can also override at runtime via:
+#   PUT /api/v1/admin/providers    — body {"config": "<JSON string>"}
+# (R2-backed; no redeploy needed. See README "Hot reload via admin API".)
+PROVIDER_CONFIG=
+
+# ── Provider secrets ────────────────────────────────────────────────
+#
+# Brevo transactional API key. Required if any domain maps to "brevo".
+# Provision with `wrangler secret put BREVO_API_KEY` for production.
+BREVO_API_KEY=
+
+# Brevo webhook signing secret. Required for /api/v1/webhooks/brevo
+# to accept delivery-status events. Set this to the same value you
+# configured in the Brevo dashboard when registering the webhook URL.
+# Provision with `wrangler secret put BREVO_WEBHOOK_SECRET`.
+BREVO_WEBHOOK_SECRET=

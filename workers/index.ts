@@ -29,6 +29,12 @@ import {
 	handleProvidersAudit,
 } from "./routes/admin-providers";
 import { handleBrevoWebhook } from "./routes/webhooks-brevo";
+import {
+	handleMailboxProviderGet,
+	handleMailboxProviderPatch,
+	handleMailboxProviderDelete,
+	handleMailboxProviderAudit,
+} from "./routes/admin-mailbox-provider";
 import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { requireMailbox } from "./lib/mailbox";
@@ -293,6 +299,41 @@ app.get("/api/v1/admin/providers/audit", requireAdmin, handleProvidersAudit);
 /** Brevo transactional webhook — verifies HMAC and updates delivery_status. */
 app.post("/api/v1/webhooks/brevo", handleBrevoWebhook);
 
+// -- Admin: per-mailbox provider override (FOLLOWUP-011) -------------
+//
+// The mailbox settings PUT endpoint rejects `provider` (it's not in
+// MailboxSettingsSchema). These admin-only endpoints are the only way
+// to override which provider a single mailbox routes through. Each
+// change is appended to config/mailbox-audit.jsonl.
+
+/** Get the current override for a mailbox (or null). */
+app.get(
+	"/api/v1/admin/mailboxes/:mailboxId/provider",
+	requireAdmin,
+	handleMailboxProviderGet,
+);
+
+/** Set or clear the override. Body: `{ type: "brevo" | "cloudflare" | null }`. */
+app.patch(
+	"/api/v1/admin/mailboxes/:mailboxId/provider",
+	requireAdmin,
+	handleMailboxProviderPatch,
+);
+
+/** Convenience alias for "clear override". */
+app.delete(
+	"/api/v1/admin/mailboxes/:mailboxId/provider",
+	requireAdmin,
+	handleMailboxProviderDelete,
+);
+
+/** Recent mailbox-provider override audit entries (newest first). */
+app.get(
+	"/api/v1/admin/mailboxes/provider-audit",
+	requireAdmin,
+	handleMailboxProviderAudit,
+);
+
 // -- Mailboxes ------------------------------------------------------
 
 app.get("/api/v1/mailboxes", async (c) => {
@@ -341,11 +382,26 @@ app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 
 app.put("/api/v1/mailboxes/:mailboxId", requireMailbox("manage"), async (c) => {
 	const mailboxId = c.req.param("mailboxId")!;
-	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
 	const key = `mailboxes/${mailboxId}.json`;
 	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
-	await c.env.BUCKET.put(key, JSON.stringify(settings));
-	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings });
+	const body = (await c.req.json()) as { settings?: unknown };
+	// Strict schema: `provider` is deliberately excluded (FOLLOWUP-011).
+	// Per-mailbox provider override goes through
+	// PATCH /api/v1/admin/mailboxes/:mailboxId/provider.
+	const parsed = MailboxSettingsSchema.safeParse(body.settings ?? body);
+	if (!parsed.success) {
+		return c.json(
+			{ error: "Invalid settings", issues: parsed.error.issues },
+			400,
+		);
+	}
+	await c.env.BUCKET.put(key, JSON.stringify(parsed.data));
+	return c.json({
+		id: mailboxId,
+		name: mailboxId,
+		email: mailboxId,
+		settings: parsed.data,
+	});
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId", requireMailbox("manage"), async (c) => {

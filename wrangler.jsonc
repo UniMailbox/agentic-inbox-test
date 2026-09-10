@@ -17,12 +17,21 @@
 		// Each configured zone must have its own Email Routing catch-all pointing to this Worker.
 		// ADMIN_EMAILS lists the Access users that should be granted the admin role.
 		// Comma-separated, whitespace tolerated. Empty = no admins (every login is a regular user).
+		//
 		// DEFAULT_PROVIDER is the fallback email-sending provider name. Defaults
 		// to "cloudflare" (which uses the send_email binding declared below).
-		// PROVIDER_CONFIG is an optional JSON blob for per-domain routing:
-		//   {"domains": {"foo.com": "brevo"}, "default": "cloudflare"}
-		// Each value must match a registered provider name. Per-mailbox override
-		// lives in the mailbox settings JSON, set via the admin endpoint only.
+		//
+		// PROVIDER_CONFIG is an optional JSON blob for per-domain routing. It
+		// must be a JSON-escaped string (the inner quotes are \" — wrangler.jsonc
+		// is itself JSON). See the README "Escape cheat sheet" for examples.
+		//   Simple form:    "{\"domains\":{\"foo.com\":\"brevo\"}}"
+		//   With fallback:  "{\"domains\":{\"foo.com\":{\"type\":\"brevo\",\"fallback\":\"cloudflare\"}}}"
+		//   With default:   "{\"domains\":{\"foo.com\":\"brevo\"},\"default\":\"cloudflare\"}"
+		// Per-mailbox override lives in the mailbox settings JSON, set via
+		// PATCH /api/v1/admin/mailboxes/:mailboxId/provider (admin only).
+		// You can also override PROVIDER_CONFIG at runtime via
+		// PUT /api/v1/admin/providers — writes R2 config/providers.json
+		// and takes effect on the next send without redeploy.
 		"DOMAINS": "example.com,foo.com, test.com",
 		"EMAIL_ADDRESSES": [],
 		"ADMIN_EMAILS": "test@example.com",
