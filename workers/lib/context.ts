@@ -14,12 +14,14 @@ export type { AccessPayload, User, Role };
 
 /**
  * Outer app context (set by `workers/app.ts`). Stores the verified Access
- * JWT payload; no domain-specific Variables here.
+ * payload and (after derivation) the authenticated User. Downstream
+ * middlewares (requireUser, /mcp forwarding) may read both.
  */
 export type AccessContext = {
 	Bindings: Env;
 	Variables: {
 		accessPayload: AccessPayload;
+		user?: User;
 	};
 };
 

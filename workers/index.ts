@@ -25,7 +25,14 @@ import type { Env } from "./types";
 import { requireMailbox } from "./lib/mailbox";
 import { requireAdmin, requireUser } from "./lib/auth";
 import { listUsers, setUserRole, deactivateUser } from "./lib/users";
-import type { MailboxContext } from "./lib/context";
+import {
+	getGrants,
+	setGrants,
+	listAccessibleMailboxIds,
+	type Grant,
+	type Grants,
+} from "./lib/grants";
+import type { MailboxContext, Permission } from "./lib/context";
 
 type AppContext = Context<MailboxContext>;
 
@@ -88,7 +95,11 @@ app.use("/api/*", cors({
 	},
 }));
 app.use("/api/*", requireUser);
-app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
+
+// Plan C: blanket "read" check on every mailbox-scoped route. Mutating
+// routes below add a stricter per-route middleware (write / delete / manage).
+app.use("/api/v1/mailboxes/:mailboxId", requireMailbox("read"));
+app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox("read"));
 
 // -- Config ---------------------------------------------------------
 
@@ -156,14 +167,71 @@ app.delete("/api/v1/admin/users/:sub", requireAdmin, async (c) => {
 	}
 });
 
+// -- Admin: grants (Plan C: per-mailbox access) ---------------------
+
+const PermissionsBody = z.object({
+	grants: z.record(z.string(), z.object({
+		permissions: z.array(z.enum(["read", "write", "delete", "manage"])),
+	})),
+});
+
+/** List every grants file. Admin-only — used by the /admin UI. */
+app.get("/api/v1/admin/grants", requireAdmin, async (c) => {
+	const out: Grants[] = [];
+	let cursor: string | undefined;
+	do {
+		const page = await c.env.BUCKET.list({ prefix: "grants/", cursor });
+		for (const obj of page.objects) {
+			const data = await c.env.BUCKET.get(obj.key);
+			if (!data) continue;
+			try {
+				const parsed = (await data.json()) as Grants;
+				if (parsed && parsed.grants) out.push(parsed);
+			} catch { /* skip malformed */ }
+		}
+		cursor = page.truncated ? page.cursor : undefined;
+	} while (cursor);
+	return c.json({ grants: out });
+});
+
+/** Get the grants for one mailbox. Admin-only. */
+app.get("/api/v1/admin/grants/:mailboxId", requireAdmin, async (c) => {
+	const mailboxId = decodeURIComponent(c.req.param("mailboxId") ?? "");
+	return c.json(await getGrants(c.env.BUCKET, mailboxId));
+});
+
+/** Replace the grant set for a mailbox. Admin-only. */
+app.put("/api/v1/admin/grants/:mailboxId", requireAdmin, async (c) => {
+	const mailboxId = decodeURIComponent(c.req.param("mailboxId") ?? "");
+	if (!(await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`))) {
+		return c.json({ error: "Mailbox not found" }, 404);
+	}
+	const { grants } = PermissionsBody.parse(await c.req.json());
+	const now = new Date().toISOString();
+	const actor = c.var.user.id;
+	const stamped: Record<string, Grant> = {};
+	for (const [sub, body] of Object.entries(grants)) {
+		// Empty permission list = no access. Skip the entry so it doesn't linger.
+		if (body.permissions.length === 0) continue;
+		stamped[sub] = { permissions: body.permissions, grantedBy: actor, grantedAt: now };
+	}
+	const record = await setGrants(c.env.BUCKET, mailboxId, stamped);
+	return c.json(record);
+});
+
 // -- Mailboxes ------------------------------------------------------
 
 app.get("/api/v1/mailboxes", async (c) => {
+	// Plan C: non-admins see only mailboxes they have any grant on.
+	const visibleIds = await listAccessibleMailboxIds(c.env.BUCKET, c.var.user);
 	const allMailboxes = await listMailboxes(c.env.BUCKET);
-	return c.json(allMailboxes.map((m) => ({ ...m, name: m.id })));
+	const visible = allMailboxes
+		.filter((m) => visibleIds.includes(m.id))
+		.map((m) => ({ ...m, name: m.id }));
+	return c.json(visible);
 });
 
-app.post("/api/v1/mailboxes", async (c) => {
+app.post("/api/v1/mailboxes", requireAdmin, async (c) => {
 	const { name, settings, email: rawEmail } = CreateMailboxBody.parse(await c.req.json());
 	const email = rawEmail.toLowerCase();
 	const allowedAddresses = (c.env.EMAIL_ADDRESSES ?? []) as string[];
@@ -197,7 +265,7 @@ app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings: await obj.json() });
 });
 
-app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
+app.put("/api/v1/mailboxes/:mailboxId", requireMailbox("manage"), async (c) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
 	const key = `mailboxes/${mailboxId}.json`;
@@ -206,7 +274,7 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings });
 });
 
-app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
+app.delete("/api/v1/mailboxes/:mailboxId", requireMailbox("manage"), async (c) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const key = `mailboxes/${mailboxId}.json`;
 	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
@@ -239,7 +307,7 @@ app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	return c.json(emails);
 });
 
-app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
+app.post("/api/v1/mailboxes/:mailboxId/emails", requireMailbox("write"), async (c: AppContext) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const body = SendEmailRequestSchema.parse(await c.req.json());
 	const { to, cc, bcc, from, subject, html, text, attachments, in_reply_to, references, thread_id } = body;
@@ -285,7 +353,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {
 	return c.json({ id: messageId, status: "sent" }, 202);
 });
 
-app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
+app.post("/api/v1/mailboxes/:mailboxId/drafts", requireMailbox("write"), async (c: AppContext) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const { to, cc, bcc, subject, body, in_reply_to, thread_id, draft_id } = DraftBody.parse(await c.req.json());
 	const stub = c.var.mailboxStub;
@@ -309,13 +377,13 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 	});
 });
 
-app.put("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
+app.put("/api/v1/mailboxes/:mailboxId/emails/:id", requireMailbox("write"), async (c: AppContext) => {
 	const { read, starred } = (await c.req.json()) as { read?: boolean; starred?: boolean };
 	const email = await c.var.mailboxStub.updateEmail(c.req.param("id")!, { read, starred });
 	return email ? c.json(email) : c.json({ error: "Email not found" }, 404);
 });
 
-app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
+app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", requireMailbox("delete"), async (c: AppContext) => {
 	const id = c.req.param("id")!;
 	const attachments = await c.var.mailboxStub.deleteEmail(id);
 	if (attachments === null) return c.json({ error: "Not found" }, 404);
@@ -323,7 +391,7 @@ app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 	return c.body(null, 204);
 });
 
-app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", requireMailbox("write"), async (c: AppContext) => {
 	const { folderId } = (await c.req.json()) as { folderId: string };
 	const success = await c.var.mailboxStub.moveEmail(c.req.param("id")!, folderId);
 	return success ? c.json({ status: "moved" }) : c.json({ error: "Folder not found" }, 400);
@@ -335,21 +403,21 @@ app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId", async (c: AppContext) 
 	return c.json(await (c.var.mailboxStub as any).getThreadEmails(c.req.param("threadId")!));
 });
 
-app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", async (c: AppContext) => {
+app.post("/api/v1/mailboxes/:mailboxId/threads/:threadId/read", requireMailbox("write"), async (c: AppContext) => {
 	await c.var.mailboxStub.markThreadRead(c.req.param("threadId")!);
 	return c.json({ status: "marked_read" });
 });
 
 // -- Reply / Forward ------------------------------------------------
 
-app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", handleReplyEmail);
-app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", handleForwardEmail);
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/reply", requireMailbox("write"), handleReplyEmail);
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/forward", requireMailbox("write"), handleForwardEmail);
 
 // -- Folders --------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => c.json(await c.var.mailboxStub.getFolders()));
 
-app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
+app.post("/api/v1/mailboxes/:mailboxId/folders", requireMailbox("write"), async (c: AppContext) => {
 	const { name } = (await c.req.json()) as { name: string };
 	const slug = slugify(name);
 	if (!slug) return c.json({ error: "Folder name must contain alphanumeric characters" }, 400);
@@ -357,13 +425,13 @@ app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	return f ? c.json(f, 201) : c.json({ error: "Folder with this name already exists" }, 409);
 });
 
-app.put("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
+app.put("/api/v1/mailboxes/:mailboxId/folders/:id", requireMailbox("write"), async (c: AppContext) => {
 	const { name } = (await c.req.json()) as { name: string };
 	const f = await c.var.mailboxStub.updateFolder(c.req.param("id")!, name);
 	return f ? c.json(f) : c.json({ error: "Folder not found" }, 404);
 });
 
-app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
+app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", requireMailbox("delete"), async (c: AppContext) => {
 	const ok = await c.var.mailboxStub.deleteFolder(c.req.param("id")!);
 	return ok ? c.body(null, 204) : c.json({ error: "Folder not found or cannot be deleted" }, 400);
 });

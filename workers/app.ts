@@ -10,7 +10,9 @@ import { app as apiApp, receiveEmail } from "./index";
 import { EmailMCP } from "./mcp";
 import type { Env } from "./types";
 import type { AccessContext } from "./lib/context";
-import type { AccessPayload } from "./lib/auth";
+import type { AccessPayload, User } from "./lib/auth";
+import { userFromPayload } from "./lib/auth";
+import { ensureUser } from "./lib/users";
 
 export { MailboxDO } from "./durableObject";
 export { EmailAgent } from "./agent";
@@ -86,6 +88,19 @@ app.use("*", async (c, next) => {
 
 	c.set("accessPayload", payload);
 
+	// Derive the User (id/email/name/role) from the verified payload and
+	// persist via ensureUser. /mcp forwarding reads `c.var.user` to populate
+	// X-User-* headers; the API layer re-derives inside requireUser.
+	const user = userFromPayload(payload, c.env);
+	if (user) {
+		c.set("user", user);
+		try {
+			await ensureUser(c.env.BUCKET, user);
+		} catch (e) {
+			console.error("ensureUser failed:", (e as Error).message);
+		}
+	}
+
 	// Authorization model note: this middleware only authenticates. Per-route
 	// authorization (admin role, per-mailbox grants) is enforced by middleware
 	// inside `apiApp` / MCP, e.g. `requireUser` / `requirePermission`.
@@ -95,12 +110,31 @@ app.use("*", async (c, next) => {
 // MCP server endpoint — used by AI coding tools (ProtoAgent, Claude Code, Cursor, etc.)
 // Must be before API routes and React Router catch-all
 const mcpHandler = EmailMCP.serve("/mcp", { binding: "EMAIL_MCP" });
-app.all("/mcp", async (c) => {
-	return mcpHandler.fetch(c.req.raw, c.env, c.executionCtx as ExecutionContext);
-});
-app.all("/mcp/*", async (c) => {
-	return mcpHandler.fetch(c.req.raw, c.env, c.executionCtx as ExecutionContext);
-});
+
+/**
+ * Forward a request to the MCP Durable Object, carrying the verified caller
+ * identity via `X-User-*` headers. The DO is single-threaded, so its
+ * `fetch` override can safely stash the caller into `this.caller` for
+ * tool handlers to read.
+ */
+function forwardToMcp(c: any, handler: typeof mcpHandler) {
+	const user = c.var.user;
+	const headers = new Headers(c.req.raw.headers);
+	if (user) {
+		headers.set("X-User-Id", user.id);
+		headers.set("X-User-Email", user.email);
+		headers.set("X-User-Role", user.role);
+	}
+	const proxied = new Request(c.req.raw.url, {
+		method: c.req.raw.method,
+		headers,
+		body: c.req.raw.body,
+	});
+	return handler.fetch(proxied, c.env, c.executionCtx as ExecutionContext);
+}
+
+app.all("/mcp", async (c) => forwardToMcp(c, mcpHandler));
+app.all("/mcp/*", async (c) => forwardToMcp(c, mcpHandler));
 
 // Mount the API routes
 app.route("/", apiApp);
