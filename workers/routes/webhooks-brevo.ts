@@ -45,11 +45,19 @@ import type { Context } from "hono";
 import { getMailboxStub } from "../lib/email-helpers";
 import type { MailboxContext } from "../lib/context";
 import type { Env } from "../types";
+import {
+	deliveryEventToUpdate,
+	type DeliveryStatus,
+} from "../webhooks/types";
 
 type AppContext = Context<MailboxContext>;
 
-/** Delivery-status values we store on the email row. */
-const DELIVERY_STATUS_MAP: Record<string, string> = {
+/**
+ * Delivery-status values we store on the email row. The values match
+ * the `DeliveryStatus` enum in workers/webhooks/types.ts (FOLLOWUP-013)
+ * — this map is the Brevo-specific translation into that schema.
+ */
+const DELIVERY_STATUS_MAP: Record<string, DeliveryStatus> = {
 	request: "accepted",
 	delivered: "delivered",
 	hard_bounce: "bounced",
@@ -166,21 +174,21 @@ export async function handleBrevoWebhook(c: AppContext): Promise<Response> {
 		return c.json({ ok: true, ignored: true, reason: "no sender" });
 	}
 
-	// Persist the new delivery state. We don't have a DO index from
-	// messageId → mailboxId, but Brevo includes the sender address in
-	// the event which we used as the from-address (== mailbox id).
-	const stub = getMailboxStub(env, sender.toLowerCase());
-	const meta = {
-		event: event.event ?? null,
-		email: event.email ?? null,
-		reason: event.reason ?? null,
-		date: event.date ?? null,
-	};
-	const changes = await stub.setDeliveryStatus(messageId, {
-		provider_name: "brevo",
-		provider_meta: JSON.stringify(meta),
-		delivery_status: status,
+	// FOLLOWUP-013: build a canonical DeliveryEvent, translate to DB
+	// update via the shared helper. Future providers (SES, Resend,
+	// Postmark) will go through the same shape.
+	const update = deliveryEventToUpdate({
+		provider: "brevo",
+		messageId,
+		status,
+		timestamp: event.date,
+		recipient: event.email,
+		reason: event.reason,
+		rawEvent: event.event,
 	});
+
+	const stub = getMailboxStub(env, sender.toLowerCase());
+	const changes = await stub.setDeliveryStatus(messageId, update);
 
 	return c.json({ ok: true, applied: changes > 0, status });
 }

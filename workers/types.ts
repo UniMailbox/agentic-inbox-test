@@ -25,4 +25,14 @@ export interface Env extends Cloudflare.Env {
 	 * in the Brevo dashboard when registering the webhook URL.
 	 */
 	BREVO_WEBHOOK_SECRET?: string;
+
+	/**
+	 * Config source order for PROVIDER_CONFIG (FOLLOWUP-012). Comma-
+	 * separated list of source names tried in order; first non-empty
+	 * wins. Valid names: `r2`, `env`. Default: `r2,env`.
+	 *
+	 * Example: `"env,r2"` to prefer the env var over R2 in environments
+	 * where the env is the source of truth.
+	 */
+	CONFIG_SOURCE?: string;
 }

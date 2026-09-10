@@ -21,6 +21,7 @@
 		"build": "react-router build",
 		"cf-typegen": "wrangler types",
 		"check:no-env-leak": "bash scripts/check-no-env-leak.sh",
+		"check:secrets-vs-types": "bash scripts/check-secrets-vs-types.sh",
 		"deploy": "npm run build && wrangler deploy",
 		"dev": "react-router dev",
 		"preview": "npm run build && vite preview",
