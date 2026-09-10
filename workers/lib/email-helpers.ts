@@ -77,6 +77,66 @@ export class SenderValidationError extends Error {
 	}
 }
 
+// ── Domain Allow-list ─────────────────────────────────────────────
+
+/**
+ * Parse the `DOMAINS` env (comma-separated) into a normalized Set of
+ * lowercase domain names. Returns an empty set when DOMAINS is unset.
+ */
+export function parseAllowedDomains(domainsRaw: string | undefined): Set<string> {
+	return new Set(
+		(domainsRaw ?? "")
+			.split(",")
+			.map((d) => d.trim().toLowerCase())
+			.filter(Boolean),
+	);
+}
+
+/**
+ * Extract the lowercase domain from an email address. Returns null when the
+ * address is malformed (no `@` or empty local/domain parts).
+ */
+export function emailDomain(email: string): string | null {
+	const at = email.lastIndexOf("@");
+	if (at < 0 || at === email.length - 1) return null;
+	const domain = email.slice(at + 1).trim().toLowerCase();
+	return domain || null;
+}
+
+/**
+ * Parse the `DOMAINS` env into a structured list with the first entry
+ * marked as the default. Mirrors the response shape of `/api/v1/config`.
+ */
+export function listDomains(domainsRaw: string | undefined): {
+	name: string;
+	isDefault: boolean;
+}[] {
+	const raw = (domainsRaw ?? "")
+		.split(",")
+		.map((d) => d.trim())
+		.filter(Boolean);
+	return raw.map((name, i) => ({ name, isDefault: i === 0 }));
+}
+
+/**
+ * Assert that the email's domain is in the allowed set. Throws
+ * `SenderValidationError` (reused for caller-friendly error handling) when
+ * DOMAINS is configured and the address doesn't match.
+ */
+export function assertDomainAllowed(
+	email: string,
+	domainsRaw: string | undefined,
+): void {
+	const allowed = parseAllowedDomains(domainsRaw);
+	if (allowed.size === 0) return; // No allow-list configured → any domain OK.
+	const domain = emailDomain(email);
+	if (!domain || !allowed.has(domain)) {
+		throw new SenderValidationError(
+			`Email domain "${domain ?? "(none)"}" is not in the configured DOMAINS allow-list`,
+		);
+	}
+}
+
 // ── Message ID ─────────────────────────────────────────────────────
 
 /**

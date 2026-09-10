@@ -37,11 +37,16 @@ export default function HomeRoute() {
 	const { data: configData } = useQuery({
 		queryKey: queryKeys.config,
 		queryFn: () => api.getConfig(),
-		staleTime: Infinity, // config rarely changes
+		// Refetch when the window regains focus so a developer who edits
+		// `wrangler.jsonc` (or `.dev.vars`) and reloads the tab sees the new
+		// domain list without clearing React Query's cache manually.
+		staleTime: 60_000,
+		refetchOnWindowFocus: true,
 	});
 
 	const domains = configData?.domains ?? [];
 	const emailAddresses = configData?.emailAddresses ?? [];
+	const defaultDomain = domains.find((d) => d.isDefault)?.name ?? domains[0]?.name ?? "";
 
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
 	const [newPrefix, setNewPrefix] = useState("");
@@ -56,12 +61,15 @@ export default function HomeRoute() {
 	} | null>(null);
 	const [isDeleting, setIsDeleting] = useState(false);
 
-	// Set default domain when config loads
+	// Set default domain when config loads (or fall back if the previous
+	// selection is no longer valid).
 	useEffect(() => {
-		if (domains.length > 0 && !selectedDomain) {
-			setSelectedDomain(domains[0]);
+		if (domains.length === 0) return;
+		const domainNames = domains.map((d) => d.name);
+		if (!selectedDomain || !domainNames.includes(selectedDomain)) {
+			setSelectedDomain(defaultDomain);
 		}
-	}, [domains, selectedDomain]);
+	}, [domains, selectedDomain, defaultDomain]);
 
 	// Auto-create mailboxes from config (run once when both data sources are ready)
 	const autoCreateDone = useRef(false);
@@ -96,8 +104,18 @@ export default function HomeRoute() {
 			setCreateError("Please fill in all fields");
 			return;
 		}
-		const email = `${newPrefix}@${selectedDomain}`;
-		const name = newName || newPrefix;
+		// Allow pasting a full address (e.g. "info@foo.com") — split it into
+		// prefix + domain so we honor the chosen domain for validation.
+		const atIndex = newPrefix.lastIndexOf("@");
+		let prefix = newPrefix;
+		let domainForAddress = selectedDomain;
+		if (atIndex > 0) {
+			prefix = newPrefix.slice(0, atIndex);
+			const pastedDomain = newPrefix.slice(atIndex + 1).trim().toLowerCase();
+			if (pastedDomain) domainForAddress = pastedDomain;
+		}
+		const email = `${prefix}@${domainForAddress}`;
+		const name = newName || prefix;
 		setIsCreating(true);
 		try {
 			await createMailbox.mutateAsync({ email, name });
@@ -156,8 +174,24 @@ export default function HomeRoute() {
 						)}
 					</div>
 					{domains.length > 0 && (
-						<p className="text-sm text-kumo-subtle mt-1">
-							{domains.join(", ")}
+						<p className="text-sm text-kumo-subtle mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+							{domains.map((d, i) => (
+								<span key={d.name} className="inline-flex items-center gap-1">
+									{d.isDefault && domains.length > 1 && (
+										<span
+											className="text-kumo-default"
+											title="Default domain"
+											aria-label="Default domain"
+										>
+											★
+										</span>
+									)}
+									<span className={d.isDefault ? "text-kumo-default" : undefined}>
+										{d.name}
+									</span>
+									{i < domains.length - 1 && <span>,</span>}
+								</span>
+							))}
 						</p>
 					)}
 				</div>
@@ -270,26 +304,35 @@ export default function HomeRoute() {
 								<span className="text-sm text-kumo-subtle">@</span>
 								{domains.length > 1 ? (
 									<div className="flex-1">
-							<Select
-								aria-label="Domain"
-								value={selectedDomain}
-								onValueChange={(value) => {
-									if (value) setSelectedDomain(value);
-								}}
-							>
+										<Select
+											aria-label="Domain"
+											value={selectedDomain}
+											onValueChange={(value) => {
+												if (value) setSelectedDomain(value);
+											}}
+										>
 											{domains.map((d) => (
-												<Select.Option key={d} value={d}>
-													{d}
+												<Select.Option key={d.name} value={d.name}>
+													{d.name}
+													{d.isDefault ? " (default)" : ""}
 												</Select.Option>
 											))}
 										</Select>
 									</div>
 								) : (
-									<span className="text-sm text-kumo-subtle">
-										{selectedDomain || "no domain"}
+									<span className="text-sm text-kumo-subtle inline-flex items-center gap-1">
+										<span>{selectedDomain || "no domain"}</span>
+										{domains.length === 1 && (
+											<span className="text-xs">(default)</span>
+										)}
 									</span>
 								)}
 							</div>
+							{domains.length > 1 && (
+								<p className="text-xs text-kumo-subtle mt-1.5">
+									You can also paste a full address (e.g. <code>info@foo.com</code>) into the prefix field.
+								</p>
+							)}
 						</div>
 						<Input
 							label="Display Name (optional)"

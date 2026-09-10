@@ -14,6 +14,9 @@ import {
 	generateMessageId,
 	buildThreadingHeaders,
 	listMailboxes,
+	assertDomainAllowed,
+	listDomains,
+	parseAllowedDomains,
 } from "./lib/email-helpers";
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
@@ -86,8 +89,7 @@ app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 // -- Config ---------------------------------------------------------
 
 app.get("/api/v1/config", (c) => {
-	const domainsRaw = c.env.DOMAINS || "";
-	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
+	const domains = listDomains(c.env.DOMAINS);
 	const emailAddresses = c.env.EMAIL_ADDRESSES ?? [];
 	return c.json({ domains, emailAddresses });
 });
@@ -105,6 +107,16 @@ app.post("/api/v1/mailboxes", async (c) => {
 	const allowedAddresses = (c.env.EMAIL_ADDRESSES ?? []) as string[];
 	if (allowedAddresses.length > 0 && !allowedAddresses.map((a) => a.toLowerCase()).includes(email)) {
 		return c.json({ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" }, 403);
+	}
+	// When EMAIL_ADDRESSES is empty, enforce the DOMAINS allow-list so users
+	// can only create mailboxes on configured domains.
+	if (allowedAddresses.length === 0) {
+		try {
+			assertDomainAllowed(email, c.env.DOMAINS);
+		} catch (e) {
+			if (e instanceof SenderValidationError) return c.json({ error: e.message }, 400);
+			throw e;
+		}
 	}
 	const key = `mailboxes/${email}.json`;
 	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
@@ -352,15 +364,39 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 	if (!parsedEmail.to?.length || !parsedEmail.to[0].address) throw new Error("received email with empty to");
 
 	const allowedAddresses = ((env.EMAIL_ADDRESSES ?? []) as string[]).map((a) => a.toLowerCase());
+	const allowedDomains = parseAllowedDomains(env.DOMAINS);
 	const allRecipients = parsedEmail.to.map((t) => t.address?.toLowerCase()).filter(Boolean) as string[];
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
+
+	// Safety net: if neither allow-list is configured, refuse the message
+	// rather than silently accepting mail for any zone. Operators must set
+	// DOMAINS (or EMAIL_ADDRESSES) to receive anything.
+	if (allowedAddresses.length === 0 && allowedDomains.size === 0) {
+		console.log("Ignoring email: no DOMAINS or EMAIL_ADDRESSES configured.");
+		return;
+	}
 
 	let mailboxId: string | undefined;
 	if (allowedAddresses.length > 0) {
 		mailboxId = allRecipients.find((addr) => allowedAddresses.includes(addr));
 		if (!mailboxId) { console.log(`Ignoring email: no recipient matches EMAIL_ADDRESSES.`); return; }
-	} else { mailboxId = allRecipients[0]; }
+	} else {
+		// Fallback: pick the first recipient whose domain is in DOMAINS so
+		// we never accept mail for an unrelated zone (which would have to be
+		// explicitly configured in Cloudflare Email Routing anyway). With
+		// multiple recipients across different configured domains, the first
+		// match wins — one inbound message belongs to exactly one mailbox.
+		mailboxId = allRecipients.find((addr) => {
+			const at = addr.lastIndexOf("@");
+			const dom = at >= 0 ? addr.slice(at + 1).toLowerCase() : "";
+			return allowedDomains.has(dom);
+		});
+		if (!mailboxId) {
+			console.log(`Ignoring email: no recipient has a domain in DOMAINS.`);
+			return;
+		}
+	}
 	if (!mailboxId) throw new Error("received email with no valid recipient address");
 
 	const messageId = crypto.randomUUID();

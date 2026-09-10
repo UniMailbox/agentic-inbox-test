@@ -13,8 +13,13 @@
 		// Production deploys must also define POLICY_AUD and TEAM_DOMAIN.
 		// TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
 		// The worker now fails closed outside local development if Access is not configured.
-		"DOMAINS": "example.com",
-		"EMAIL_ADDRESSES": []
+		// DOMAINS accepts multiple comma-separated values; the first entry is the default.
+		// Each configured zone must have its own Email Routing catch-all pointing to this Worker.
+		// ADMIN_EMAILS lists the Access users that should be granted the admin role.
+		// Comma-separated, whitespace tolerated. Empty = no admins (every login is a regular user).
+		"DOMAINS": "example.com,foo.com, test.com",
+		"EMAIL_ADDRESSES": [],
+		"ADMIN_EMAILS": ""
 	},
 	"send_email": [
 		{

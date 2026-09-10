@@ -59,8 +59,30 @@ npm run dev
 
 ### Configuration
 
-1. Set your domain in `wrangler.jsonc`
+1. Set your domain(s) in `wrangler.jsonc` (`DOMAINS` is a comma-separated list — see [Multiple domains](#multiple-domains) below)
 2. Create an R2 bucket named `agentic-inbox`: `wrangler r2 bucket create agentic-inbox`
+
+### Multiple domains
+
+`DOMAINS` accepts a comma-separated list of zones that have [Email Routing](https://developers.cloudflare.com/email-routing/) enabled. The first value is treated as the **default domain** in the UI; the others are selectable when creating a mailbox.
+
+```jsonc
+"vars": {
+  "DOMAINS": "example.com,foo.com,bar.com",
+  "EMAIL_ADDRESSES": []
+}
+```
+
+Operational notes:
+
+- **One Worker, many zones.** Cloudflare Email Routing only delivers mail for the zone on which the catch-all rule is configured. You must add a catch-all rule (`*@example.com → Worker`, `*@foo.com → Worker`, etc.) in **each** zone's Email Routing dashboard, all pointing to this same Worker.
+- **Default domain.** Only the first entry in `DOMAINS` is shown in the UI as the default; other entries appear in the domain picker when creating mailboxes.
+- **Changing `DOMAINS` locally.** Edit `wrangler.jsonc` (or `.dev.vars` if you have one) and **restart `wrangler dev`** — `vars` are loaded at boot, not hot-reloaded. The UI refetches on focus/reload after restart.
+- **Inbound delivery to the right mailbox.** When a message arrives, the worker picks the **first recipient whose domain is in `DOMAINS`** (or whose address is in `EMAIL_ADDRESSES`, which takes precedence). One inbound message is delivered to exactly one mailbox; cross-domain recipients on the same message are not split into multiple mailboxes.
+- **Outbound mail.** The `From` address of every outgoing email is the mailbox address itself, so the displayed sender domain is whichever domain the mailbox was created on. Make sure outbound `send_email` is enabled for every zone in the Email Service dashboard.
+- **Per-domain allow-list.** When `EMAIL_ADDRESSES` is empty, mailboxes can only be created on addresses whose domain is in `DOMAINS`. With `EMAIL_ADDRESSES` set, that explicit allow-list takes precedence and `DOMAINS` still gates inbound delivery (the recipient domain must match one of the configured zones).
+- **Safety net.** If neither `EMAIL_ADDRESSES` nor `DOMAINS` is configured, inbound mail is refused (logged and dropped). Configure at least one before expecting to receive anything.
+- **Multi-domain ≠ multi-tenant.** All teammates who pass the shared Cloudflare Access policy can still see every mailbox. Per-mailbox permissions are not yet supported.
 
 ### Deploy
 
