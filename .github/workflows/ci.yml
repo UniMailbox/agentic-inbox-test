@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit:
+    name: Unit tests + guards + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Sanitize guard (no console.log(env))
+        run: npm run check:no-env-leak
+      - name: Secrets-vs-types guard
+        run: npm run check:secrets-vs-types
+
+  integration:
+    name: Integration tests (Brevo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only run on main (push). PRs from forks can't access secrets
+    # without explicit approval, so skip them — the unit job above
+    # already covers the providers' contracts.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Integration tests against real Brevo API
+        env:
+          BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
+        run: npm test -- tests/integration

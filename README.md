@@ -57,6 +57,22 @@ npm install
 npm run dev
 ```
 
+### Tests
+
+```bash
+npm test                              # 188 unit tests across 14 files
+npm run check:no-env-leak             # forbidden env-logging guard
+npm run check:secrets-vs-types        # secret-vs-Env declaration guard
+
+# Real-API integration tests (requires a Brevo test key):
+BREVO_API_KEY=<key> npm test -- tests/integration
+```
+
+Unit tests run offline against in-memory fakes and mock fetch; the
+integration suite hits the real Brevo API. CI (`.github/workflows/ci.yml`)
+runs unit + guards on every PR and integration only on pushes to `main`
+where the `BREVO_API_KEY` secret is available.
+
 ### Configuration
 
 1. Set your domain(s) in `wrangler.jsonc` (`DOMAINS` is a comma-separated list — see [Multiple domains](#multiple-domains) below)
