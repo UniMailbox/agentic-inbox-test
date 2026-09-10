@@ -91,16 +91,12 @@ export function getUser(c: Context<UserContext>): User {
 export const requireUser: MiddlewareHandler<UserContext> = async (c, next) => {
 	let payload: AccessPayload | undefined = c.var.accessPayload;
 
-	// Dev fallback: synthesize a payload from X-Dev-User.
+	// Dev fallback: prefer X-Dev-User, else synthesize a default identity so
+	// unauthenticated curl/browser requests still work locally.
 	if (!payload && import.meta.env.DEV) {
 		const devHeader = c.req.header("x-dev-user");
-		if (devHeader) {
-			const parsed = parseDevUserHeader(devHeader);
-			if (parsed) {
-				payload = parsed;
-				c.set("accessPayload", payload);
-			}
-		}
+		payload = parseDevUserHeader(devHeader) ?? defaultDevPayload();
+		c.set("accessPayload", payload);
 	}
 
 	if (!payload?.sub) {
@@ -136,7 +132,19 @@ export const requireAdmin: MiddlewareHandler<UserContext> = async (c, next) => {
 
 // ── Dev helper ─────────────────────────────────────────────────────
 
-function parseDevUserHeader(header: string): AccessPayload | null {
+const DEV_DEFAULT_EMAIL = "dev@local";
+
+function defaultDevPayload(): AccessPayload {
+	const email = DEV_DEFAULT_EMAIL;
+	return {
+		sub: `dev:${email}`,
+		email,
+		name: "Dev",
+	};
+}
+
+function parseDevUserHeader(header: string | undefined): AccessPayload | null {
+	if (!header) return null;
 	const trimmed = header.trim();
 	// Try JSON first.
 	if (trimmed.startsWith("{")) {
