@@ -17,9 +17,17 @@
 		// Each configured zone must have its own Email Routing catch-all pointing to this Worker.
 		// ADMIN_EMAILS lists the Access users that should be granted the admin role.
 		// Comma-separated, whitespace tolerated. Empty = no admins (every login is a regular user).
+		// DEFAULT_PROVIDER is the fallback email-sending provider name. Defaults
+		// to "cloudflare" (which uses the send_email binding declared below).
+		// PROVIDER_CONFIG is an optional JSON blob for per-domain routing:
+		//   {"domains": {"foo.com": "brevo"}, "default": "cloudflare"}
+		// Each value must match a registered provider name. Per-mailbox override
+		// lives in the mailbox settings JSON, set via the admin endpoint only.
 		"DOMAINS": "example.com,foo.com, test.com",
 		"EMAIL_ADDRESSES": [],
-		"ADMIN_EMAILS": ""
+		"ADMIN_EMAILS": "test@example.com",
+		"DEFAULT_PROVIDER": "cloudflare",
+		"PROVIDER_CONFIG": ""
 	},
 	"send_email": [
 		{

@@ -5,4 +5,15 @@
 export interface Env extends Cloudflare.Env {
 	POLICY_AUD: string;
 	TEAM_DOMAIN: string;
+
+	/**
+	 * Brevo transactional API key. Set via `wrangler secret put BREVO_API_KEY`.
+	 * Declared here as `string | undefined` so the project typechecks before the
+	 * secret is provisioned; the Brevo provider throws `EmailProviderConfigError`
+	 * at construction time if the value is missing.
+	 *
+	 * After running `wrangler secret put BREVO_API_KEY` once, re-running
+	 * `wrangler types` will narrow this to `string`.
+	 */
+	BREVO_API_KEY?: string;
 }

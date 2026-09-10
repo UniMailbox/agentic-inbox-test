@@ -38,10 +38,41 @@ type AppContext = Context<MailboxContext>;
 
 // -- Request body schemas (kept for validation) ---------------------
 
+/**
+ * Settings schema for mailbox creation. Explicit fields only — `provider`
+ * (per-mailbox provider override) is deliberately excluded and must be set
+ * via the dedicated admin endpoint (FOLLOWUP-011).
+ */
+const MailboxSettingsSchema = z
+	.object({
+		agentSystemPrompt: z.string().optional(),
+		fromName: z.string().optional(),
+		forwarding: z
+			.object({
+				enabled: z.boolean(),
+				email: z.string().email().or(z.literal("")),
+			})
+			.optional(),
+		signature: z
+			.object({
+				enabled: z.boolean(),
+				text: z.string(),
+			})
+			.optional(),
+		autoReply: z
+			.object({
+				enabled: z.boolean(),
+				subject: z.string(),
+				message: z.string(),
+			})
+			.optional(),
+	})
+	.strict();
+
 const CreateMailboxBody = z.object({
 	email: z.string().email(),
 	name: z.string().min(1),
-	settings: z.record(z.any()).optional(), // unvalidated — agentSystemPrompt goes straight to AI
+	settings: MailboxSettingsSchema.optional(),
 });
 
 const DraftBody = z.object({
@@ -344,7 +375,7 @@ app.post("/api/v1/mailboxes/:mailboxId/emails", requireMailbox("write"), async (
 	}, attachmentData);
 
 	c.executionCtx.waitUntil(
-		sendEmail(c.env.EMAIL, {
+		sendEmail(c.env, {
 			to, cc, bcc, from, subject, html, text,
 			attachments: attachments?.map((att) => ({ content: att.content, filename: att.filename, type: att.type, disposition: att.disposition || "attachment", contentId: att.contentId })),
 			...(in_reply_to ? { headers: buildThreadingHeaders(in_reply_to, references || []) } : {}),

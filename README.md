@@ -117,6 +117,71 @@ The MCP server at `/mcp` enforces the same per-mailbox grants: external AI tools
                      └──────────────────┘     └─────────────────┘
 ```
 
+## Email sending providers
+
+The worker ships with a pluggable provider abstraction in `workers/providers/`. Each registered provider knows how to send one `EmailMessage`; the registry routes outgoing mail by the sender's domain so different `from` domains can use different backends.
+
+### Built-in providers
+
+| Provider | `name` | Backed by | Notes |
+|---|---|---|---|
+| **Cloudflare Email Service** | `"cloudflare"` | `env.EMAIL.send()` binding | Default. Always available when the binding is declared. |
+| **Brevo** | `"brevo"` | `https://api.brevo.com/v3/smtp/email` | Requires `BREVO_API_KEY` secret (`wrangler secret put BREVO_API_KEY`). The `From` address must be on Brevo's verified-senders list. |
+
+### Resolution precedence
+
+The sender's domain is looked up in this order; the first match wins:
+
+1. **Per-mailbox override** — `mailboxes/{email}.json` → `settings.provider.type` (admin-only)
+2. **`PROVIDER_CONFIG.domains[domain]`** — operator-defined routing
+3. **`PROVIDER_CONFIG.default`** — operator-defined fallback
+4. **`DEFAULT_PROVIDER`** env var
+5. **`"cloudflare"`** — hard-coded last resort
+
+### Configuration
+
+Route `foo.com` to Brevo and keep Cloudflare as the default for everything else:
+
+```jsonc
+// wrangler.jsonc
+"vars": {
+  "DEFAULT_PROVIDER": "cloudflare",
+  "PROVIDER_CONFIG": "{\"domains\":{\"foo.com\":\"brevo\"}}"
+}
+```
+
+```bash
+# Brevo secret (only required if any domain maps to brevo)
+wrangler secret put BREVO_API_KEY
+```
+
+Because `wrangler.jsonc` is JSON, the embedded JSON in `PROVIDER_CONFIG` must escape its inner quotes. The same config in a TOML `.dev.vars` is unescaped:
+
+```toml
+# .dev.vars (local dev only)
+DEFAULT_PROVIDER = "cloudflare"
+PROVIDER_CONFIG = '{"domains":{"foo.com":"brevo"}}'
+```
+
+### Adding a new provider
+
+1. Create `workers/providers/<name>.ts` with `class XProvider implements EmailProvider`.
+2. Register it in `PROVIDERS` inside `workers/providers/registry.ts`.
+3. Add the matching secret via `wrangler secret put <NAME>_API_KEY` and re-run `wrangler types`.
+4. Reference it in `PROVIDER_CONFIG.domains`.
+
+No call-site changes are required — `sendEmail(env, msg)` resolves the adapter transparently.
+
+### Limitations (as of v1)
+
+- **Per-domain routing only.** No failover, no weighted routing, no per-mailbox override via the public create-mailbox endpoint (admin only).
+- **Provider limits are enforced synchronously.** `validateMessage()` rejects over-limit messages before they reach the provider — calls that previously failed in `waitUntil` now return `4xx` immediately. Provider limits are conservative defaults; consult each provider's docs for exact caps.
+- **`PROVIDER_CONFIG` changes require `wrangler deploy`.** Hot reload is not supported; the registry caches parsed config per isolate.
+- **No transactional webhooks.** Delivery status is opaque — the SENT folder records the message but not whether the recipient's mailbox accepted it. (Tracked as `FOLLOWUP-004` / `FOLLOWUP-013` for v1.1 / v2.)
+- **No automatic failover.** If a provider is down, messages routed to it fail; manually re-route by editing `PROVIDER_CONFIG`. (Tracked as `FOLLOWUP-005` for v1.1.)
+- **Sender domain normalization.** Unicode domains (IDN) are converted to ASCII via punycode before lookup, but quoted local parts (`"john doe"@example.com`) and other RFC 5322 edge cases are not deeply parsed. The `from` address must already be plain enough for `extractDomain(msg.from)` to work.
+- **No outgoing-message audit log in the DB.** `providerName` and `providerMeta` are not currently stored alongside the SENT row; only the bound provider is logged at send time. (Tracked as `FOLLOWUP-004`.)
+
 ## License
 
 Apache 2.0 -- see [LICENSE](LICENSE).
