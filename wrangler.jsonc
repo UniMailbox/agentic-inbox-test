@@ -10,13 +10,10 @@
 		"nodejs_compat"
 	],
 	"vars": {
-		// Production deploys must also define POLICY_AUD and TEAM_DOMAIN.
-		// TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
-		// The worker now fails closed outside local development if Access is not configured.
 		// DOMAINS accepts multiple comma-separated values; the first entry is the default.
 		// Each configured zone must have its own Email Routing catch-all pointing to this Worker.
-		// ADMIN_EMAILS lists the Access users that should be granted the admin role.
-		// Comma-separated, whitespace tolerated. Empty = no admins (every login is a regular user).
+		// ADMIN_EMAILS lists the email addresses that should be granted the admin role
+		// at sign-up / sign-in. Comma-separated, whitespace tolerated. Empty = no admins.
 		//
 		// DEFAULT_PROVIDER is the fallback email-sending provider name. Defaults
 		// to "cloudflare" (which uses the send_email binding declared below).
@@ -32,11 +29,21 @@
 		// You can also override PROVIDER_CONFIG at runtime via
 		// PUT /api/v1/admin/providers — writes R2 config/providers.json
 		// and takes effect on the next send without redeploy.
+		//
+		// BETTER_AUTH_URL is the public URL of the auth endpoints, used for
+		// building email-verification and password-reset callback links.
+		// In dev this is typically http://localhost:5173.
+		//
+		// EMAIL_FROM is the From address used by better-auth for verification
+		// and password-reset emails (sent via Resend). It must be on a
+		// verified sender domain in your Resend account.
 		"DOMAINS": "example.com,foo.com, test.com",
 		"EMAIL_ADDRESSES": [],
 		"ADMIN_EMAILS": "test@example.com",
 		"DEFAULT_PROVIDER": "cloudflare",
-		"PROVIDER_CONFIG": ""
+		"PROVIDER_CONFIG": "",
+		"BETTER_AUTH_URL": "http://localhost:5173",
+		"EMAIL_FROM": "no-reply@example.com"
 	},
 	"send_email": [
 		{
@@ -70,6 +77,20 @@
 			}
 		]
 	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "agentic-inbox-db",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "workers/db/migrations"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "SESSIONS_KV",
+			"id": "0000000000000000000000000000000a"
+		}
+	],
 	"migrations": [
 		{
 			"tag": "v1",
