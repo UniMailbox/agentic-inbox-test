@@ -1,6 +1,18 @@
-# Cloudflare Access (required in production). TEAM_DOMAIN may be the base Access URL or the full /cdn-cgi/access/certs URL.
-POLICY_AUD=your-access-policy-audience-tag
-TEAM_DOMAIN=https://your-team.cloudflareaccess.com
+# ── Local development only ────────────────────────────────────────
+#
+# Better-auth (Plan D): we use email + password authentication.
+# Generate a signing secret locally with `npx @better-auth/cli secret`
+# and paste it into BETTER_AUTH_SECRET below. The default domain in
+# wrangler.jsonc (http://localhost:5173) is fine for dev — the SPA
+# proxies /api/* to the wrangler worker, so cookies are first-party.
+#
+# RESEND_API_KEY is the transactional email provider used for
+# verification + password-reset emails. In dev, leave it unset (or set
+# to "dev") and the worker will console.log the verification URL
+# instead of POSTing to Resend — the link appears in `wrangler dev`
+# output.
+BETTER_AUTH_SECRET=replace-me-with-the-output-of-npx-better-auth-cli-secret
+RESEND_API_KEY=
 
 # Local development only — set your domain(s) and any pre-created mailbox addresses.
 # DOMAINS supports multiple comma-separated values. The first value is the default domain.

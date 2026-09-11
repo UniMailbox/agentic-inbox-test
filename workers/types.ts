@@ -26,13 +26,6 @@ export type Env = Cloudflare.Env & {
 	/** `wrangler secret put RESEND_API_KEY` — used by workers/auth/sendEmail.ts. */
 	RESEND_API_KEY?: string;
 
-	// Deprecated Plan B-era CF Access secrets. Plan D replaces CF Access with
-	// better-auth, so these are unused but kept optional on the type for one
-	// release to avoid breaking the in-flight wrangler secrets until the
-	// D3 commit removes them from app.ts.
-	POLICY_AUD?: string;
-	TEAM_DOMAIN?: string;
-
 	/**
 	 * Brevo transactional API key. Set via `wrangler secret put BREVO_API_KEY`.
 	 * Declared here as `string | undefined` so the project typechecks before the

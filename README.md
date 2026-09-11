@@ -23,17 +23,37 @@ https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
 
      [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/agentic-inbox)
 
-2. **Configure Cloudflare Access** -- Enable [one-click Cloudflare Access](https://developers.cloudflare.com/changelog/post/2025-10-03-one-click-access-for-workers/) on your Worker under Settings > Domains & Routes. The modal will show your `POLICY_AUD` and `TEAM_DOMAIN` values. `TEAM_DOMAIN` can be either your Access team URL or the full `.../cdn-cgi/access/certs` URL. **You must set these as secrets for your Worker.**
-3. **Set up Email Routing** -- In the Cloudflare dashboard, go to your domain > Email Routing and create a catch-all rule that forwards to this Worker
-4. **Enable Email Service** -- The worker needs the `send_email` binding to send outbound emails. See [Email Service docs](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/)
-5. **Create a mailbox** -- Visit your deployed app and create a mailbox for any address on your domain (e.g. `hello@example.com`)
+2. **Provision better-auth storage** -- The app uses Cloudflare D1 (binding `DB`) for users/sessions/accounts and a KV namespace (binding `SESSIONS_KV`) for session caching.
 
-### Troubleshooting Access
+   ```bash
+   wrangler d1 create agentic-inbox-db
+   wrangler d1 migrations apply agentic-inbox-db --remote
+   wrangler kv namespace create SESSIONS
+   ```
 
-1. If you see `Invalid or expired Access token`, that usually means `POLICY_AUD` or `TEAM_DOMAIN` secrets are incorrect.
-   * Resolution: [turn Access off and back on for the Worker to get the Access modal again](https://developers.cloudflare.com/changelog/post/2025-10-03-one-click-access-for-workers/), then reset your Worker secrets to the latest `POLICY_AUD` and `TEAM_DOMAIN` values shown there.
-2. If you see `Cloudflare Access must be configured in production`, this application is intentionally enforcing Cloudflare Access so your inbox is not exposed to anyone on the internet.
-   * Resolution: enable Access using [one-click Cloudflare Access for Workers](https://developers.cloudflare.com/changelog/post/2025-10-03-one-click-access-for-workers/), then set the `POLICY_AUD` and `TEAM_DOMAIN` Worker secrets from the modal values.
+   Then paste the returned `database_id` and KV namespace `id` into the matching entries in `wrangler.jsonc`. Re-run `npm run cf-typegen` so the new bindings appear in `Env`.
+
+3. **Set the auth secrets** -- Generate a session-signing secret and a Resend API key (for verification / password-reset emails), then push them as Worker secrets:
+
+   ```bash
+   npx @better-auth/cli secret           # paste the output as BETTER_AUTH_SECRET
+   wrangler secret put BETTER_AUTH_SECRET
+   wrangler secret put RESEND_API_KEY     # from resend.com; "dev" logs links to wrangler dev output instead
+   ```
+
+   Also set the `BETTER_AUTH_URL` and `EMAIL_FROM` vars in `wrangler.jsonc` to your deployed URL and a verified Resend sender (e.g. `no-reply@yourdomain.com`).
+
+4. **Bootstrap the first admin** -- List one or more emails in the `ADMIN_EMAILS` var in `wrangler.jsonc`. Anyone who signs up with that email gets the admin role automatically; everyone else lands in the `user` role and sees only mailboxes they've been granted access to.
+
+5. **Set up Email Routing** -- In the Cloudflare dashboard, go to your domain > Email Routing and create a catch-all rule that forwards to this Worker
+6. **Enable Email Service** -- The worker needs the `send_email` binding to send outbound emails. See [Email Service docs](https://developers.cloudflare.com/email-routing/email-workers/send-email-workers/)
+7. **Sign up & create a mailbox** -- Open the deployed app, sign up (the verification email is sent through Resend), then visit `/admin` to create a mailbox for any address on your domain (e.g. `hello@example.com`)
+
+### Troubleshooting better-auth
+
+1. If `/api/auth/sign-up/email` returns 500 with `Failed to send Resend ...` in the worker logs, `RESEND_API_KEY` is missing or invalid. Set it with `wrangler secret put RESEND_API_KEY` and re-deploy.
+2. If verification emails don't arrive in dev, check the `wrangler dev` output — when `RESEND_API_KEY` is unset or `"dev"`, the worker console.logs the verification URL instead of sending (mirrors the existing dev pattern for `ADMIN_EMAILS`).
+3. If you're locked out as the last admin, set `ADMIN_EMAILS` to your email, `wrangler deploy`, and sign in again — the role bootstrap fires on every successful sign-in.
 
 ## Features
 
@@ -48,7 +68,7 @@ https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
 - **Frontend:** React 19, React Router v7, Tailwind CSS, Zustand, TipTap, `@cloudflare/kumo`
 - **Backend:** Hono, Cloudflare Workers, Durable Objects (SQLite), R2, Email Routing
 - **AI Agent:** Cloudflare Agents SDK (`AIChatAgent`), AI SDK v6, Workers AI (`@cf/moonshotai/kimi-k2.5`), `react-markdown` + `remark-gfm`
-- **Auth:** Cloudflare Access JWT validation (required outside local development); per-mailbox grants enforced via `ADMIN_EMAILS` + `/admin` UI
+- **Auth:** Email + password via better-auth (D1 + KV session cache; Resend for verification / reset); per-mailbox grants enforced via `ADMIN_EMAILS` + `/admin` UI. TOTP MFA is a follow-up.
 
 ## Getting Started
 
@@ -98,7 +118,7 @@ Operational notes:
 - **Outbound mail.** The `From` address of every outgoing email is the mailbox address itself, so the displayed sender domain is whichever domain the mailbox was created on. Make sure outbound `send_email` is enabled for every zone in the Email Service dashboard.
 - **Per-domain allow-list.** When `EMAIL_ADDRESSES` is empty, mailboxes can only be created on addresses whose domain is in `DOMAINS`. With `EMAIL_ADDRESSES` set, that explicit allow-list takes precedence and `DOMAINS` still gates inbound delivery (the recipient domain must match one of the configured zones).
 - **Safety net.** If neither `EMAIL_ADDRESSES` nor `DOMAINS` is configured, inbound mail is refused (logged and dropped). Configure at least one before expecting to receive anything.
-- **Multi-domain ≠ multi-tenant.** All teammates who pass the shared Cloudflare Access policy are recognized by the app. Admins (configured via `ADMIN_EMAILS`) see every mailbox; everyone else only sees mailboxes they've been granted access to on `/admin` → Mailbox access. Each grant can be `read`, `write`, `delete`, or `manage` (which implies all the others).
+- **Multi-domain ≠ multi-tenant.** Admins (configured via `ADMIN_EMAILS`) see every mailbox; everyone else only sees mailboxes they've been granted access to on `/admin` → Mailbox access. Each grant can be `read`, `write`, `delete`, or `manage` (which implies all the others).
 
 ### Deploy
 
@@ -112,9 +132,10 @@ npm run deploy
 - [Email Routing](https://developers.cloudflare.com/email-routing/) enabled for receiving
 - [Email Service](https://developers.cloudflare.com/email-service/) enabled for sending
 - [Workers AI](https://developers.cloudflare.com/workers-ai/) enabled (for the agent)
-- [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) configured for deployed/shared environments (required in production)
+- A [Resend](https://resend.com/) account + API key (for better-auth verification / password-reset emails)
+- A D1 database + KV namespace (better-auth storage)
 
-Any user who passes the shared Cloudflare Access policy is recognized by the app. Admins (anyone listed in the `ADMIN_EMAILS` env var) can see and manage every mailbox. Other users only see mailboxes they have been granted access to on the `/admin` page.
+Any signed-up user is recognized by the app. Admins (anyone listed in the `ADMIN_EMAILS` env var) can see and manage every mailbox; non-admins only see mailboxes they have been granted access to on the `/admin` page.
 
 The MCP server at `/mcp` enforces the same per-mailbox grants: external AI tools (Claude Code, Cursor, etc.) connected via MCP operate on a mailbox only if the calling user has the required permission (`read`/`write`/`delete`/`manage`) on it. `manage` implies all others.
 
@@ -198,28 +219,29 @@ If you find the escaping unreadable, paste your intended config into a [JSON esc
 Operators can override `PROVIDER_CONFIG` at runtime without redeploying by writing it to the R2 bucket as `config/providers.json`. The registry reads R2 first, then falls back to the env var, so the override takes effect on the next send in any isolate (no cache flush needed; the composite config key auto-invalidates `instanceCache` + `domainCache`).
 
 ```bash
+# Sign in once and stash the session cookie (better-auth sets it as HttpOnly)
+curl -c cookies.txt -X POST https://<your-worker>/api/auth/sign-in/email \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"<admin-email>","password":"<password>"}'
+
 # Write / replace the override
 curl -X PUT https://<your-worker>/api/v1/admin/providers \
+  -b cookies.txt \
   -H 'Content-Type: application/json' \
-  -H 'cf-access-jwt-assertion: <admin JWT>' \
   -d '{"config":"{\"domains\":{\"foo.com\":\"brevo\"}}"}'
 
 # Read the active config (R2 if set, else env var)
-curl https://<your-worker>/api/v1/admin/providers \
-  -H 'cf-access-jwt-assertion: <admin JWT>'
+curl https://<your-worker>/api/v1/admin/providers -b cookies.txt
 
 # Drop the override (subsequent reads fall back to env var)
-curl -X DELETE https://<your-worker>/api/v1/admin/providers \
-  -H 'cf-access-jwt-assertion: <admin JWT>'
+curl -X DELETE https://<your-worker>/api/v1/admin/providers -b cookies.txt
 
 # View the audit log (newest first; default limit 50, max 500)
-curl 'https://<your-worker>/api/v1/admin/providers/audit?limit=20' \
-  -H 'cf-access-jwt-assertion: <admin JWT>'
+curl 'https://<your-worker>/api/v1/admin/providers/audit?limit=20' -b cookies.txt
 
 # Liveness + circuit-breaker snapshot (any provider with an open breaker
 # shows up here; failures trip the breaker at 5 consecutive errors)
-curl https://<your-worker>/api/v1/admin/providers/health \
-  -H 'cf-access-jwt-assertion: <admin JWT>'
+curl https://<your-worker>/api/v1/admin/providers/health -b cookies.txt
 ```
 
 The audit log is appended to `config/audit.jsonl` (JSONL; one entry per write/delete with `timestamp`, `actor`, `action`, `previousRaw`, `nextRaw`).
@@ -273,23 +295,23 @@ mailbox routes through. Each change is audited to
 ```bash
 # Read the current override (or null)
 curl https://<your-worker>/api/v1/admin/mailboxes/alice@example.com/provider \
-  -H 'cf-access-jwt-assertion: <admin JWT>'
+  -b cookies.txt
 
 # Set an override
 curl -X PATCH https://<your-worker>/api/v1/admin/mailboxes/alice@example.com/provider \
+  -b cookies.txt \
   -H 'Content-Type: application/json' \
-  -H 'cf-access-jwt-assertion: <admin JWT>' \
   -d '{"type":"brevo"}'
 
 # Clear the override (next send falls back to PROVIDER_CONFIG / DEFAULT_PROVIDER)
 curl -X DELETE https://<your-worker>/api/v1/admin/mailboxes/alice@example.com/provider \
-  -H 'cf-access-jwt-assertion: <admin JWT>'
+  -b cookies.txt
 # — or —
-curl -X PATCH .../provider -d '{"type":null}'
+curl -X PATCH .../provider -b cookies.txt -d '{"type":null}'
 
 # Audit log (newest first)
 curl 'https://<your-worker>/api/v1/admin/mailboxes/provider-audit?limit=20' \
-  -H 'cf-access-jwt-assertion: <admin JWT>'
+  -b cookies.txt
 ```
 
 The `provider` field on the mailbox JSON is only written by these
