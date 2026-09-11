@@ -10,6 +10,7 @@ import { EmailMCP } from "./mcp";
 import { createAuth } from "./auth/betterAuth";
 import { sessionMiddleware } from "./auth/sessionMiddleware";
 import { devSessionMiddleware } from "./auth/devSession";
+import { hasPermission } from "./lib/grants";
 import type { Env } from "./types";
 import type { AccessContext } from "./lib/context";
 import { _runEagerValidation } from "./providers/registry";
@@ -107,8 +108,23 @@ app.all("/mcp/*", async (c) => forwardToMcp(c, mcpHandler));
 // Mount the API routes
 app.route("/", apiApp);
 
-// Agent WebSocket routing - must be before React Router catch-all
+// Agent WebSocket routing - must be before React Router catch-all.
+// Plan D6: enforce per-mailbox grants at the HTTP/WS edge so the agent DO
+// (which is single-tenant to a mailbox) is only reachable by users who have
+// at least `read` permission. Admins always pass.
 app.all("/agents/*", async (c) => {
+	const user = c.var.user;
+	if (!user) return c.text("Unauthenticated", 401);
+
+	// Extract mailboxId from the URL: /agents/{mailboxId}/...
+	const path = c.req.path.replace(/^\/agents\//, "");
+	const mailboxId = decodeURIComponent(path.split("/")[0] ?? "");
+
+	if (mailboxId && user.role !== "admin") {
+		const ok = await hasPermission(c.env.BUCKET, user, mailboxId, "read");
+		if (!ok) return c.text("Forbidden", 403);
+	}
+
 	const response = await routeAgentRequest(c.req.raw, c.env);
 	if (response) return response;
 	return c.text("Agent not found", 404);
