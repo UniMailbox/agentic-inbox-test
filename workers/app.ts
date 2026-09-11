@@ -8,6 +8,7 @@ import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { EmailMCP } from "./mcp";
+import { createAuth } from "./auth/betterAuth";
 import type { Env } from "./types";
 import type { AccessContext } from "./lib/context";
 import type { AccessPayload, User } from "./lib/auth";
@@ -48,6 +49,16 @@ function getAccessUrls(teamDomain: string) {
 // (apiApp, MCP) declare their own context types via the centralized
 // definitions in `workers/lib/context.ts`.
 const app = new Hono<AccessContext>();
+
+// Plan D: better-auth endpoint. Must be registered BEFORE the wildcard
+// Cloudflare Access JWT middleware below, so /api/auth/* requests do
+// not require a `cf-access-jwt-assertion` header. better-auth will
+// eventually own all session concerns; the JWT middleware is removed
+// in the D3 commit.
+app.all("/api/auth/*", (c) => {
+	const auth = createAuth(c.env);
+	return auth.handler(c.req.raw);
+});
 
 // FOLLOWUP-009: eager provider-config validation. Runs once per isolate on
 // the first inbound request — we can't do this at module load because
