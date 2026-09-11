@@ -17,3 +17,6 @@ opencode.jsonc
 skills-lock.json
 .DS_Store
 worker-configuration.d.ts
+.idea/
+pnpm-lock.yaml
+pnpm-workspace.yaml
