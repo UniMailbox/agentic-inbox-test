@@ -9,6 +9,7 @@ import { app as apiApp, receiveEmail } from "./index";
 import { EmailMCP } from "./mcp";
 import { createAuth } from "./auth/betterAuth";
 import { sessionMiddleware } from "./auth/sessionMiddleware";
+import { devSessionMiddleware } from "./auth/devSession";
 import type { Env } from "./types";
 import type { AccessContext } from "./lib/context";
 import { _runEagerValidation } from "./providers/registry";
@@ -65,6 +66,12 @@ function runEagerValidationOnce(env: Env): void {
 app.use("*", async (c, next) => {
 	// FOLLOWUP-009: validate PROVIDER_CONFIG once on first request.
 	runEagerValidationOnce(c.env);
+	// In dev, the X-Dev-User header synthesizes a session so we can skip
+	// the better-auth roundtrip entirely. Production builds strip this
+	// branch (and the devSessionMiddleware import becomes tree-shaken).
+	if (import.meta.env.DEV) {
+		return devSessionMiddleware(c, next);
+	}
 	return sessionMiddleware(c, next);
 });
 
