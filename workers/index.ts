@@ -21,6 +21,7 @@ import {
 } from "./lib/email-helpers";
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
+import { handleGrantsBackfill } from "./routes/admin-backfill";
 import { handleProvidersHealth } from "./routes/admin-providers-health";
 import {
 	handleProvidersGet,
@@ -264,6 +265,13 @@ app.put("/api/v1/admin/grants/:mailboxId", requireAdmin, async (c) => {
 	const record = await setGrants(c.env.BUCKET, mailboxId, stamped);
 	return c.json(record);
 });
+
+/**
+ * One-shot migration (Plan D5): rewrite R2 grants keys from `dev:{email}`
+ * to `{email}`. Admin-only. Default mode is dry-run; pass `?apply=true` to
+ * mutate. Safe to re-run — already-migrated keys are skipped.
+ */
+app.post("/api/v1/admin/backfill-grants", requireAdmin, handleGrantsBackfill);
 
 // -- Admin: provider health (FOLLOWUP-009) ---------------------------
 
