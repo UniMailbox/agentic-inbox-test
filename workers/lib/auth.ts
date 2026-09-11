@@ -3,34 +3,35 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * Authentication primitives.
+ * Authentication primitives (Plan D: better-auth).
  *
- * Phase A (Plan A): extract user identity from the Access JWT, derive the
- * `admin` role from the `ADMIN_EMAILS` wrangler var, expose a Hono middleware
- * that populates `c.var.user`. No persistence yet — Plan B will register
- * users into R2.
+ * The outer middleware in `workers/app.ts` (`sessionMiddleware`) loads the
+ * better-auth session and populates `c.var.user`. This module owns:
+ *  - the `User` shape used across the rest of the codebase
+ *  - ADMIN_EMAILS evaluation (still the bootstrap source for admin role)
+ *  - the `requireUser` / `requireAdmin` route guards
+ *
+ * Plan C's JWT decode + R2 user records live in git history; they were
+ * replaced by better-auth's D1 schema (`workers/auth/d1Schema.ts`).
  */
 import type { Context, MiddlewareHandler } from "hono";
 import type { Env } from "../types";
 import type { UserContext } from "./context";
-import { ensureUser } from "./users";
 
 export type Role = "admin" | "user";
 
 export interface User {
-	/** Stable subject identifier from the Access JWT (used as primary key). */
+	/**
+	 * Stable subject identifier. Plan D: this is the user's email (not the
+	 * better-auth random id). Used as the grants key in R2 and as the
+	 * `X-User-Id` header for MCP/Agent Durable Objects.
+	 */
 	id: string;
 	email: string;
 	name: string;
 	role: Role;
-}
-
-/** Shape of the relevant fields from a verified Cloudflare Access JWT. */
-export interface AccessPayload {
-	sub?: string;
-	email?: string;
-	name?: string;
-	[key: string]: unknown;
+	/** Soft-delete flag. Deactivated users get 403 from requireUser. */
+	active: boolean;
 }
 
 // ── Admin email helpers ────────────────────────────────────────────
@@ -58,18 +59,6 @@ export function isAdminEmail(
 	return adminEmailSet(env).has(email.toLowerCase());
 }
 
-/** Build a User record from an Access payload + env. */
-export function userFromPayload(
-	payload: AccessPayload | undefined,
-	env: Pick<Env, "ADMIN_EMAILS">,
-): User | null {
-	if (!payload?.sub) return null;
-	const email = (payload.email as string | undefined)?.toLowerCase() ?? "";
-	const name = (payload.name as string | undefined) ?? email;
-	const role: Role = isAdminEmail(email, env) ? "admin" : "user";
-	return { id: payload.sub, email, name, role };
-}
-
 /** Read the current user from Hono context (set by requireUser). */
 export function getUser(c: Context<UserContext>): User {
 	return c.var.user;
@@ -79,47 +68,20 @@ export function getUser(c: Context<UserContext>): User {
 
 /**
  * Hono middleware that requires an authenticated user. Must be installed
- * AFTER the Access JWT middleware that verifies the token and stores the
- * payload at `c.var.accessPayload` (see `workers/app.ts`).
+ * AFTER `sessionMiddleware` (see `workers/auth/sessionMiddleware.ts`) which
+ * has already loaded the better-auth session and derived `c.var.user`.
  *
- * In dev mode (`import.meta.env.DEV`), this middleware will also accept an
- * `X-Dev-User` request header so a developer can impersonate a user without
- * running a full Cloudflare Access setup. The header value may be either a
- * plain email ("alice@example.com") or a JSON object string
- * (`{"sub":"...","email":"alice@example.com","name":"Alice"}`).
+ * 401 when there is no session. 403 when the user is deactivated.
  */
 export const requireUser: MiddlewareHandler<UserContext> = async (c, next) => {
-	let payload: AccessPayload | undefined = c.var.accessPayload;
-
-	// Dev fallback: prefer X-Dev-User, else synthesize a default identity so
-	// unauthenticated curl/browser requests still work locally.
-	if (!payload && import.meta.env.DEV) {
-		const devHeader = c.req.header("x-dev-user");
-		payload = parseDevUserHeader(devHeader) ?? defaultDevPayload();
-		c.set("accessPayload", payload);
-	}
-
-	if (!payload?.sub) {
+	const session = c.var.session;
+	const user = c.var.user;
+	if (!session || !user) {
 		return c.text("Unauthenticated", 401);
 	}
-
-	const user = userFromPayload(payload, c.env);
-	if (!user) return c.text("Invalid user identity", 401);
-	c.set("user", user);
-
-	// Persist a UserRecord so admins can see this identity in the registry.
-	// Deactivated users are still authenticated but get a 403 below so any
-	// later authorization middleware sees an inactive user.
-	try {
-		const record = await ensureUser(c.env.BUCKET, user);
-		if (!record.active) {
-			return c.text("Account deactivated", 403);
-		}
-	} catch (e) {
-		// Don't block the request on R2 errors — log and continue.
-		console.error("ensureUser failed:", (e as Error).message);
+	if (!user.active) {
+		return c.text("Account deactivated", 403);
 	}
-
 	await next();
 };
 
@@ -129,38 +91,3 @@ export const requireAdmin: MiddlewareHandler<UserContext> = async (c, next) => {
 	if (c.var.user.role !== "admin") return c.text("Forbidden", 403);
 	await next();
 };
-
-// ── Dev helper ─────────────────────────────────────────────────────
-
-const DEV_DEFAULT_EMAIL = "dev@local";
-
-function defaultDevPayload(): AccessPayload {
-	const email = DEV_DEFAULT_EMAIL;
-	return {
-		sub: `dev:${email}`,
-		email,
-		name: "Dev",
-	};
-}
-
-function parseDevUserHeader(header: string | undefined): AccessPayload | null {
-	if (!header) return null;
-	const trimmed = header.trim();
-	// Try JSON first.
-	if (trimmed.startsWith("{")) {
-		try {
-			const obj = JSON.parse(trimmed);
-			if (typeof obj === "object" && obj) return obj as AccessPayload;
-		} catch {
-			return null;
-		}
-	}
-	// Otherwise treat as a bare email and synthesize a stable sub.
-	const email = trimmed.toLowerCase();
-	if (!email.includes("@")) return null;
-	return {
-		sub: `dev:${email}`,
-		email,
-		name: email.split("@")[0],
-	};
-}

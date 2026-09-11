@@ -4,16 +4,13 @@
 
 import { routeAgentRequest } from "agents";
 import { Hono } from "hono";
-import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { EmailMCP } from "./mcp";
 import { createAuth } from "./auth/betterAuth";
+import { sessionMiddleware } from "./auth/sessionMiddleware";
 import type { Env } from "./types";
 import type { AccessContext } from "./lib/context";
-import type { AccessPayload, User } from "./lib/auth";
-import { userFromPayload } from "./lib/auth";
-import { ensureUser } from "./lib/users";
 import { _runEagerValidation } from "./providers/registry";
 
 export { MailboxDO } from "./durableObject";
@@ -34,27 +31,15 @@ const requestHandler = createRequestHandler(
 	import.meta.env.MODE,
 );
 
-function getAccessUrls(teamDomain: string) {
-	const certsPath = "/cdn-cgi/access/certs";
-	const teamUrl = new URL(teamDomain);
-	const issuer = teamUrl.origin;
-	const certsUrl = teamUrl.pathname.endsWith(certsPath)
-		? teamUrl
-		: new URL(certsPath, issuer);
-
-	return { issuer, certsUrl };
-}
-
 // Hono context type used by the outer middleware chain. Inner routers
 // (apiApp, MCP) declare their own context types via the centralized
 // definitions in `workers/lib/context.ts`.
 const app = new Hono<AccessContext>();
 
-// Plan D: better-auth endpoint. Must be registered BEFORE the wildcard
-// Cloudflare Access JWT middleware below, so /api/auth/* requests do
-// not require a `cf-access-jwt-assertion` header. better-auth will
-// eventually own all session concerns; the JWT middleware is removed
-// in the D3 commit.
+// Plan D: better-auth endpoint. Registered BEFORE the session middleware
+// below so /api/auth/* requests can be anonymous (sign-up, sign-in,
+// forgot/reset). better-auth itself attaches the Set-Cookie header on
+// successful sign-in/sign-up; downstream middleware picks it up.
 app.all("/api/auth/*", (c) => {
 	const auth = createAuth(c.env);
 	return auth.handler(c.req.raw);
@@ -72,66 +57,15 @@ function runEagerValidationOnce(env: Env): void {
 	_runEagerValidation(env);
 }
 
-// Cloudflare Access JWT validation middleware (production only).
-// On success the verified payload is stored at `c.var.accessPayload` so
-// downstream middleware (e.g. `requireUser` in `workers/lib/auth.ts`) can
-// derive the authenticated user.
+// Plan D: better-auth session middleware (replaces the Cloudflare Access
+// JWT middleware that lived here through Plan C). Loads the session via
+// `auth.api.getSession` and populates `c.var.user` for downstream
+// middlewares (`requireUser`, /mcp forwarding). Anonymous requests are
+// valid; `requireUser` enforces 401 for protected routes.
 app.use("*", async (c, next) => {
 	// FOLLOWUP-009: validate PROVIDER_CONFIG once on first request.
 	runEagerValidationOnce(c.env);
-
-	// Skip Access JWT validation in development
-	if (import.meta.env.DEV) {
-		return next();
-	}
-
-	const { POLICY_AUD, TEAM_DOMAIN } = c.env;
-
-	// Fail closed in production if Access is not configured.
-	if (!POLICY_AUD || !TEAM_DOMAIN) {
-		return c.text(
-			"Cloudflare Access must be configured in production. Set POLICY_AUD and TEAM_DOMAIN.",
-			500,
-		);
-	}
-
-	const token = c.req.header("cf-access-jwt-assertion");
-	if (!token) {
-		return c.text("Missing required CF Access JWT", 403);
-	}
-
-	let payload: AccessPayload;
-	try {
-		const { issuer, certsUrl } = getAccessUrls(TEAM_DOMAIN);
-		const JWKS = createRemoteJWKSet(certsUrl);
-		const verified = await jwtVerify(token, JWKS, {
-			issuer,
-			audience: POLICY_AUD,
-		});
-		payload = verified.payload as AccessPayload;
-	} catch {
-		return c.text("Invalid or expired Access token", 403);
-	}
-
-	c.set("accessPayload", payload);
-
-	// Derive the User (id/email/name/role) from the verified payload and
-	// persist via ensureUser. /mcp forwarding reads `c.var.user` to populate
-	// X-User-* headers; the API layer re-derives inside requireUser.
-	const user = userFromPayload(payload, c.env);
-	if (user) {
-		c.set("user", user);
-		try {
-			await ensureUser(c.env.BUCKET, user);
-		} catch (e) {
-			console.error("ensureUser failed:", (e as Error).message);
-		}
-	}
-
-	// Authorization model note: this middleware only authenticates. Per-route
-	// authorization (admin role, per-mailbox grants) is enforced by middleware
-	// inside `apiApp` / MCP, e.g. `requireUser` / `requirePermission`.
-	return next();
+	return sessionMiddleware(c, next);
 });
 
 // MCP server endpoint — used by AI coding tools (ProtoAgent, Claude Code, Cursor, etc.)

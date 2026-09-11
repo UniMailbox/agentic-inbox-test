@@ -7,27 +7,54 @@
  * route handlers depend on a single, predictable set of `c.var.*` keys.
  */
 import type { Env } from "../types";
-import type { AccessPayload, User, Role } from "./auth";
+import type { User, Role } from "./auth";
 
 // Re-export the auth shapes so consumers can import everything from here.
-export type { AccessPayload, User, Role };
+export type { User, Role };
 
 /**
- * Outer app context (set by `workers/app.ts`). Stores the verified Access
- * payload and (after derivation) the authenticated User. Downstream
- * middlewares (requireUser, /mcp forwarding) may read both.
+ * Session shape as returned by better-auth's `api.getSession`. We use a
+ * narrow structural type here (not the full generic `Auth`) so consumers
+ * don't pull in better-auth's zod path through their transitive deps.
+ */
+export interface AppSession {
+	session: {
+		id: string;
+		userId: string;
+		expiresAt: Date;
+		token: string;
+		ipAddress?: string | null;
+		userAgent?: string | null;
+	};
+	user: {
+		id: string;
+		email: string;
+		name: string;
+		role?: string;
+		active?: boolean;
+		emailVerified?: boolean;
+		image?: string | null;
+		createdAt?: Date;
+		updatedAt?: Date;
+	};
+}
+
+/**
+ * Outer app context (set by `workers/app.ts`). Stores the verified
+ * better-auth session (if any) and the derived authenticated `User`.
+ * Downstream middlewares (`requireUser`, `/mcp` forwarding) read these.
  */
 export type AccessContext = {
 	Bindings: Env;
 	Variables: {
-		accessPayload: AccessPayload;
+		session: AppSession | null;
 		user?: User;
 	};
 };
 
 /**
  * Authenticated user context. Installed by the `requireUser` middleware
- * once a verified Access payload (or dev `X-Dev-User` header) is present.
+ * after `sessionMiddleware` has populated `c.var.user`.
  */
 export type UserContext = AccessContext & {
 	Variables: AccessContext["Variables"] & {

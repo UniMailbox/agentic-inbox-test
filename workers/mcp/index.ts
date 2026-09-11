@@ -60,7 +60,7 @@ function mcpResult(result: Record<string, unknown>) {
 	return mcpText(result);
 }
 
-const ANONYMOUS: User = { id: "anonymous", email: "", name: "Anonymous", role: "user" };
+const ANONYMOUS: User = { id: "anonymous", email: "", name: "Anonymous", role: "user", active: false };
 
 /**
  * EmailMCP — exposes email tools over the Model Context Protocol.
@@ -92,6 +92,7 @@ export class EmailMCP extends McpAgent<Env> {
 				email,
 				name: email,
 				role: role === "admin" ? "admin" : "user",
+				active: true,
 			};
 		}
 		return super.fetch(request);

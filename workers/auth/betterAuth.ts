@@ -23,6 +23,7 @@ import { drizzle } from "drizzle-orm/d1";
 
 import { schema } from "./d1Schema";
 import { sendEmail } from "./sendEmail";
+import { ensureAdminRole } from "./adminBootstrap";
 import { adminEmailSet } from "../lib/auth";
 import type { Env } from "../types";
 
@@ -106,11 +107,32 @@ export function createAuth(env: Env) {
 		databaseHooks: {
 			user: {
 				create: {
-					before: async (user: { email?: string }) => {
+					before: async (user: { id?: string; email?: string }) => {
 						const admins = adminEmailSet(env);
 						const email = user.email?.toLowerCase();
 						const role = email && admins.has(email) ? "admin" : "user";
-						return { data: { ...user, role } };
+						// Use the email as the stable user id. Grants and
+						// `X-User-Id` MCP headers reference `c.var.user.id`;
+						// making it the email keeps both human-readable.
+						const id = email ?? user.id;
+						return { data: { ...user, id, role } };
+					},
+				},
+			},
+			session: {
+				create: {
+					// Re-evaluate ADMIN_EMAILS on every successful sign-in.
+					// `ensureAdminRole` is monotonic (only promotes, never
+					// demotes) so this is the explicit fix for the Plan C
+					// role-clobber bug.
+					after: async (session: { userId?: string; user?: { email?: string } }) => {
+						const email = session.user?.email ?? null;
+						try {
+							await ensureAdminRole(env, email);
+						} catch (e) {
+							// Don't block sign-in on a bootstrap failure; just log.
+							console.error("ensureAdminRole failed:", (e as Error).message);
+						}
 					},
 				},
 			},
