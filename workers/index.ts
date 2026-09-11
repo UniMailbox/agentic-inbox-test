@@ -40,7 +40,7 @@ import { Folders } from "../shared/folders";
 import type { Env } from "./types";
 import { requireMailbox } from "./lib/mailbox";
 import { requireAdmin, requireUser } from "./lib/auth";
-import { listUsers, setUserRole, deactivateUser } from "./auth/users";
+import { listUsers, setUserRole, deactivateUser, reactivateUser } from "./auth/users";
 import {
 	getGrants,
 	setGrants,
@@ -207,6 +207,24 @@ app.delete("/api/v1/admin/users/:userId", requireAdmin, async (c) => {
 		if (msg === "Admins cannot deactivate themselves") {
 			return c.json({ error: msg }, 409);
 		}
+		if (msg.endsWith("not found")) {
+			return c.json({ error: msg }, 404);
+		}
+		throw e;
+	}
+});
+
+/**
+ * Reactivate a previously deactivated user (Plan D8). Reverses the soft-
+ * delete performed by DELETE /api/v1/admin/users/:userId. Idempotent.
+ */
+app.put("/api/v1/admin/users/:userId/reactivate", requireAdmin, async (c) => {
+	const userId = decodeURIComponent(c.req.param("userId") ?? "");
+	try {
+		const updated = await reactivateUser(c.env, userId);
+		return c.json(updated);
+	} catch (e) {
+		const msg = (e as Error).message;
 		if (msg.endsWith("not found")) {
 			return c.json({ error: msg }, 404);
 		}

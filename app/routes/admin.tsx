@@ -9,6 +9,7 @@ import { useMe } from "~/queries/me";
 import {
 	useAdminUsers,
 	useDeactivateUser,
+	useReactivateUser,
 	useUpdateUserRole,
 } from "~/queries/users";
 import { useMailboxes } from "~/queries/mailboxes";
@@ -31,6 +32,7 @@ function UsersTab() {
 	const { data: users = [], isLoading: usersLoading } = useAdminUsers();
 	const updateRole = useUpdateUserRole();
 	const deactivate = useDeactivateUser();
+	const reactivate = useReactivateUser();
 	const toastManager = useKumoToastManager();
 	const [busySub, setBusySub] = useState<string | null>(null);
 
@@ -61,6 +63,21 @@ function UsersTab() {
 		} catch (err) {
 			toastManager.add({
 				title: (err instanceof Error ? err.message : null) || "Failed to deactivate",
+				variant: "error",
+			});
+		} finally {
+			setBusySub(null);
+		}
+	};
+
+	const handleReactivate = async (sub: string, email: string) => {
+		setBusySub(sub);
+		try {
+			await reactivate.mutateAsync(sub);
+			toastManager.add({ title: `${email} reactivated` });
+		} catch (err) {
+			toastManager.add({
+				title: (err instanceof Error ? err.message : null) || "Failed to reactivate",
 				variant: "error",
 			});
 		} finally {
@@ -142,14 +159,25 @@ function UsersTab() {
 										>
 											{u.role === "admin" ? "Demote" : "Promote"}
 										</Button>
-										<Button
-											variant="ghost"
-											size="xs"
-											disabled={isBusy || !!isSelf || !u.active}
-											onClick={() => handleDeactivate(u.id, u.email)}
-										>
-											Deactivate
-										</Button>
+										{u.active ? (
+											<Button
+												variant="ghost"
+												size="xs"
+												disabled={isBusy || !!isSelf}
+												onClick={() => handleDeactivate(u.id, u.email)}
+											>
+												Deactivate
+											</Button>
+										) : (
+											<Button
+												variant="ghost"
+												size="xs"
+												disabled={isBusy}
+												onClick={() => handleReactivate(u.id, u.email)}
+											>
+												Reactivate
+											</Button>
+										)}
 									</div>
 								</td>
 							</tr>

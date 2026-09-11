@@ -38,3 +38,13 @@ export function useDeactivateUser() {
 		},
 	});
 }
+
+export function useReactivateUser() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (sub: string) => api.reactivateAdminUser(sub),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: queryKeys.adminUsers });
+		},
+	});
+}

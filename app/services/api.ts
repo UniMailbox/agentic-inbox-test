@@ -170,6 +170,8 @@ const api = {
 		),
 	deactivateAdminUser: (sub: string) =>
 		del<UserRecord>(`/api/v1/admin/users/${encodeURIComponent(sub)}`),
+	reactivateAdminUser: (sub: string) =>
+		put<UserRecord>(`/api/v1/admin/users/${encodeURIComponent(sub)}/reactivate`),
 
 	// Admin: grants (Plan C: per-mailbox access)
 	listAdminGrants: () => get<{ grants: Grants[] }>("/api/v1/admin/grants"),
