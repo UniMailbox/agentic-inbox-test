@@ -2,11 +2,12 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Badge, Button, Input, Tooltip } from "@cloudflare/kumo";
-import { GearSixIcon, ListIcon, MagnifyingGlassIcon, RobotIcon, UserCircleIcon, XIcon } from "@phosphor-icons/react";
+import { Badge, Button, Input, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
+import { GearSixIcon, ListIcon, MagnifyingGlassIcon, RobotIcon, SignOutIcon, UserCircleIcon, XIcon } from "@phosphor-icons/react";
 import { type KeyboardEvent, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useUIStore } from "~/hooks/useUIStore";
+import { useSignOut } from "~/queries/auth";
 import { useMe } from "~/queries/me";
 
 export default function Header() {
@@ -18,6 +19,20 @@ export default function Header() {
 	const [searchParams] = useSearchParams();
 	const { toggleSidebar, toggleAgentPanel, isAgentPanelOpen } = useUIStore();
 	const { data: me } = useMe();
+	const signOut = useSignOut();
+	const toastManager = useKumoToastManager();
+
+	const handleSignOut = async () => {
+		try {
+			await signOut.mutateAsync();
+			navigate("/login", { replace: true });
+		} catch (err) {
+			toastManager.add({
+				title: err instanceof Error ? err.message : "Sign out failed",
+				variant: "error",
+			});
+		}
+	};
 
 	// Sync search input with URL query param so it stays populated
 	const urlQuery = searchParams.get("q") || "";
@@ -136,6 +151,19 @@ export default function Header() {
 								</Link>
 							)}
 						</div>
+					</Tooltip>
+				)}
+				{me && (
+					<Tooltip content="Sign out" side="bottom" asChild>
+						<Button
+							variant="ghost"
+							shape="square"
+							size="sm"
+							icon={<SignOutIcon size={18} />}
+							onClick={handleSignOut}
+							aria-label="Sign out"
+							disabled={signOut.isPending}
+						/>
 					</Tooltip>
 				)}
 				<Tooltip content={isAgentPanelOpen ? "Hide agent panel" : "Show agent panel"} side="bottom" asChild>

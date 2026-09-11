@@ -134,6 +134,33 @@ const api = {
 	// Auth
 	getMe: () => get<Me>("/api/v1/me"),
 
+	// Better-auth endpoints (Plan D). The client never sees the better-auth
+	// cookie directly — it's set as HttpOnly by the worker on sign-in/sign-up.
+	// We use `credentials: "include"` (via the shared `request` helper, which
+	// forwards the cookie on same-origin requests) so the session cookie
+	// rides along.
+	signUp: (email: string, password: string, name: string) =>
+		post<{ user: { id: string; email: string } }>(
+			"/api/auth/sign-up/email",
+			{ email, password, name },
+		),
+	signIn: (email: string, password: string) =>
+		post<{ user: { id: string; email: string }; redirect: boolean }>(
+			"/api/auth/sign-in/email",
+			{ email, password },
+		),
+	signOut: () => post<boolean>("/api/auth/sign-out"),
+	forgotPassword: (email: string, redirectTo: string) =>
+		post<{ success: boolean }>(
+			"/api/auth/forget-password",
+			{ email, redirectTo },
+		),
+	resetPassword: (token: string, newPassword: string) =>
+		post<{ success: boolean }>(
+			"/api/auth/reset-password",
+			{ token, newPassword },
+		),
+
 	// Admin: user registry
 	listAdminUsers: () => get<{ users: UserRecord[] }>("/api/v1/admin/users"),
 	updateAdminUserRole: (sub: string, role: "admin" | "user") =>
